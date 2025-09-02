@@ -355,7 +355,13 @@ async function generateSpecification(description, techStack, modules) {
   ]
 }
 
-IMPORTANT: 반드시 유효한 JSON 형식으로만 응답하세요. 설명이나 추가 텍스트는 포함하지 마세요.`,
+IMPORTANT: 
+1. 반드시 유효한 JSON 형식으로만 응답하세요. 설명이나 추가 텍스트는 포함하지 마세요.
+2. 모든 함수 정의와 매개변수는 반드시 ${techStack.stack.language} 문법을 사용하세요.
+   - Swift: func functionName(parameter: Type) -> ReturnType
+   - JavaScript: function functionName(parameter) {}
+   - Java: public ReturnType functionName(Type parameter) {}
+   - Python: def function_name(parameter: type) -> return_type:`,
     en: `Generate a detailed software design specification in JSON format based on the following information.
 
 Project Description: ${description}
@@ -392,7 +398,13 @@ Please respond in the following JSON structure:
   ]
 }
 
-IMPORTANT: Respond only in valid JSON format. Do not include explanations or additional text.`
+IMPORTANT: 
+1. Respond only in valid JSON format. Do not include explanations or additional text.
+2. All function definitions and parameters must use ${techStack.stack.language} syntax:
+   - Swift: func functionName(parameter: Type) -> ReturnType
+   - JavaScript: function functionName(parameter) {}
+   - Java: public ReturnType functionName(Type parameter) {}
+   - Python: def function_name(parameter: type) -> return_type:`
   };
 
   const specResponse = await callAI(prompts[language], 1, 'specification');

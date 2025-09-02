@@ -1,6 +1,6 @@
 {
   "name": "sds-generator",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Transform project descriptions into complete software specifications. Auto-detects project types, offers tech stack options, generates module/function tables plus development files.",
   "main": "sds.js",
   "bin": {

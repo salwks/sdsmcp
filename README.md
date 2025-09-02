@@ -1,14 +1,17 @@
 # SDS (Software Design Specification) Generator
 
-A tool that converts natural language project descriptions into comprehensive software design specifications.
+A tool that converts natural language project descriptions into comprehensive software design specifications. Now featuring a modular architecture for improved maintainability and extensibility.
 
 ## Features
 
-- **Natural Language Input**: Supports Korean project descriptions
-- **Auto Project Type Detection**: Automatically detects Mobile, Web, Backend, Desktop projects
+- **Natural Language Input**: Supports both Korean and English project descriptions
+- **Auto Project Type Detection**: Automatically detects Mobile, Web, Backend projects
+- **Smart API Selection**: Intelligently selects best AI API based on task type and performance
 - **Tech Stack Selection**: Multiple technology stack options for each platform
-- **Complete Specification**: Generates detailed specifications in table format
+- **Complete Specification**: Generates detailed specifications with functions and test cases
 - **Development Files**: Auto-generates structured files in .sds directory
+- **MCP Server**: Compatible with Claude Code and other MCP clients
+- **Modular Architecture**: Clean separation of concerns for better maintainability
 
 ## Installation
 
@@ -87,9 +90,6 @@ Process:
 - Node.js/Express
 - Python/FastAPI
 
-### Desktop
-- Electron
-- Tauri
 
 ## Example Output
 
@@ -113,11 +113,25 @@ Generated specification includes:
 - Module function table (Module | Function | Design Spec | Function Definition | Remarks)
 - Detailed module descriptions
 
-## Supported APIs
+## Architecture
 
-- **Anthropic Claude**: Set `ANTHROPIC_API_KEY`
+### Modular Structure
+- **lib/errors.js**: Custom error classes and centralized error handling
+- **lib/config.js**: Configuration management and logging system
+- **lib/api-client.js**: Unified API client with smart selection
+- **mcp-server.js**: MCP server implementation
+- **sds.js**: CLI interface
+
+### Supported APIs
+- **Anthropic Claude**: Set `ANTHROPIC_API_KEY` (Recommended)
 - **OpenAI GPT**: Set `OPENAI_API_KEY`
 - **Perplexity**: Set `PERPLEXITY_API_KEY`
+
+### MCP Integration
+Use as MCP server with Claude Code:
+```bash
+sds --mcp
+```
 
 ## License
 

@@ -69,7 +69,7 @@ function loadPipedInput() {
 // API call functions with timeout
 async function callClaude(prompt) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60초 타임아웃
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
   
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -97,7 +97,7 @@ async function callClaude(prompt) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Request timeout after 60 seconds');
+      throw new Error('Request timeout after 30 seconds');
     }
     throw error;
   }
@@ -105,7 +105,7 @@ async function callClaude(prompt) {
 
 async function callOpenAI(prompt) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60초 타임아웃
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
   
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -132,7 +132,7 @@ async function callOpenAI(prompt) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Request timeout after 60 seconds');
+      throw new Error('Request timeout after 30 seconds');
     }
     throw error;
   }
@@ -140,7 +140,7 @@ async function callOpenAI(prompt) {
 
 async function callPerplexity(prompt) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60초 타임아웃
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
   
   try {
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
@@ -167,7 +167,7 @@ async function callPerplexity(prompt) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Request timeout after 60 seconds');
+      throw new Error('Request timeout after 30 seconds');
     }
     throw error;
   }

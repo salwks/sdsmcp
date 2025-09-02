@@ -705,6 +705,9 @@ async function main() {
   }
 }
 
+// Session storage for specifications
+const sessions = new Map();
+
 // MCP Server functionality
 function startMCPServer() {
   const server = {
@@ -712,26 +715,90 @@ function startMCPServer() {
     version: "1.0.10",
     tools: [
       {
-        name: "generate_specification",
-        description: "Generate software design specification from project description",
+        name: "analyze_project_request",
+        description: "자연어 프로젝트 요청을 분석하여 구조화된 명세서 생성",
         inputSchema: {
           type: "object",
           properties: {
-            description: {
+            project_description: {
               type: "string",
-              description: "Project description"
+              description: "사용자의 자연어 프로젝트 설명"
             },
-            projectType: {
+            target_platform: {
               type: "string",
-              enum: ["mobile", "web", "backend", "desktop"],
-              description: "Type of project"
+              enum: ["embedded", "web", "mobile", "desktop", "api", "auto"],
+              default: "auto",
+              description: "대상 플랫폼 (auto: 자동 판단)"
             },
-            techStack: {
+            complexity_level: {
               type: "string",
-              description: "Preferred tech stack"
+              enum: ["simple", "medium", "complex", "auto"],
+              default: "auto",
+              description: "복잡도 수준 (auto: 자동 판단)"
+            },
+            include_advanced_features: {
+              type: "boolean",
+              default: true,
+              description: "고급 기능 포함 여부 (보안, 로깅, 에러처리 등)"
             }
           },
-          required: ["description"]
+          required: ["project_description"]
+        }
+      },
+      {
+        name: "refine_specification",
+        description: "기존 명세서를 사용자 피드백에 따라 수정/확장",
+        inputSchema: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "명세서 세션 ID (analyze_project_request로부터 반환받은 ID)"
+            },
+            current_spec: {
+              type: "string",
+              description: "기존 명세서 JSON 문자열 (session_id가 없을 경우에만 사용)"
+            },
+            modification_request: {
+              type: "string",
+              description: "사용자의 수정 요청"
+            },
+            action_type: {
+              type: "string",
+              enum: ["add_module", "add_function", "modify_function", "remove_item", "auto"],
+              default: "auto",
+              description: "수행할 작업 유형"
+            }
+          },
+          required: ["modification_request"]
+        }
+      },
+      {
+        name: "export_specification",
+        description: "명세서를 다양한 형태로 출력",
+        inputSchema: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "명세서 세션 ID (analyze_project_request로부터 반환받은 ID)"
+            },
+            spec_data: {
+              type: "string",
+              description: "명세서 JSON 데이터 (session_id가 없을 경우에만 사용)"
+            },
+            export_format: {
+              type: "string",
+              enum: ["markdown", "json", "csv", "xlsx"],
+              default: "markdown",
+              description: "출력 형태"
+            },
+            include_templates: {
+              type: "boolean",
+              default: false,
+              description: "코드 템플릿 포함 여부"
+            }
+          }
         }
       }
     ]
@@ -759,42 +826,271 @@ function startMCPServer() {
           id: request.id,
           result: { tools: server.tools }
         }) + '\n');
-      } else if (request.method === 'tools/call' && request.params.name === 'generate_specification') {
-        const { description, projectType = 'web', techStack } = request.params.arguments;
-        
-        await loadEnv();
-        const selectedProjectType = projectType;
-        const techStackOptions = techStackOptions[selectedProjectType];
-        const selectedTechStack = techStackOptions[0];
-        
-        const moduleList = await generateModuleList(description);
-        const specification = await generateSpecification(description, selectedTechStack, moduleList);
-        const markdown = generateMarkdown(specification);
-        
-        process.stdout.write(JSON.stringify({
-          jsonrpc: "2.0",
-          id: request.id,
-          result: {
-            content: [
-              {
-                type: "text",
-                text: markdown
-              }
-            ]
-          }
-        }) + '\n');
+      } else if (request.method === 'tools/call') {
+        if (request.params.name === 'analyze_project_request') {
+          await handleAnalyzeProjectRequest(request);
+        } else if (request.params.name === 'refine_specification') {
+          await handleRefineSpecification(request);
+        } else if (request.params.name === 'export_specification') {
+          await handleExportSpecification(request);
+        }
       }
     } catch (error) {
       process.stdout.write(JSON.stringify({
         jsonrpc: "2.0",
         id: request?.id || null,
         error: {
-          code: -1,
+          code: -32603,
           message: error.message
         }
       }) + '\n');
     }
   });
+}
+
+// MCP Handler functions
+async function handleAnalyzeProjectRequest(request) {
+  const { project_description, target_platform = 'auto', complexity_level = 'auto', include_advanced_features = true } = request.params.arguments;
+  
+  await loadEnv();
+  
+  // Auto-detect platform if needed
+  let detectedPlatform = target_platform;
+  if (target_platform === 'auto') {
+    if (project_description.includes('모바일') || project_description.includes('mobile') || project_description.includes('앱')) {
+      detectedPlatform = 'mobile';
+    } else if (project_description.includes('웹') || project_description.includes('web')) {
+      detectedPlatform = 'web';
+    } else {
+      detectedPlatform = 'web'; // default
+    }
+  }
+  
+  // Select appropriate tech stack
+  const availableStacks = techStackOptions[detectedPlatform];
+  const selectedTechStack = availableStacks ? availableStacks[0] : techStackOptions.web[0];
+  
+  // Generate modules
+  const moduleList = await generateModuleList(project_description);
+  const specification = await generateSpecification(project_description, selectedTechStack, moduleList.slice(0, 10));
+  
+  // Generate session ID
+  const sessionId = `spec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Store in session
+  const sessionData = {
+    specification,
+    platform: detectedPlatform,
+    complexity: complexity_level,
+    advanced_features: include_advanced_features,
+    created_at: new Date().toISOString()
+  };
+  sessions.set(sessionId, sessionData);
+  
+  // Generate markdown with language info
+  const markdownWithLang = generateMarkdownWithLanguage(specification, detectedPlatform);
+  
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: {
+      content: [
+        {
+          type: "text",
+          text: `## 프로젝트 분석 결과
+
+**프로젝트 타입**: ${detectedPlatform}
+**복잡도**: ${complexity_level}
+**주요 기능**: ${getMainFeatures(detectedPlatform)}
+**세션 ID**: \`${sessionId}\`
+
+## 소프트웨어 설계 명세서
+
+${markdownWithLang}`
+        }
+      ]
+    }
+  }) + '\n');
+}
+
+async function handleRefineSpecification(request) {
+  const { session_id, modification_request, action_type = 'auto' } = request.params.arguments;
+  
+  if (!session_id || !sessions.has(session_id)) {
+    throw new Error('명세서 세션을 찾을 수 없습니다. 올바른 session_id를 제공해주세요.');
+  }
+  
+  const sessionData = sessions.get(session_id);
+  const currentSpec = sessionData.specification;
+  
+  await loadEnv();
+  
+  // Generate modification based on request
+  const modificationPrompt = `현재 명세서를 다음 요청에 따라 수정해주세요:
+
+요청: ${modification_request}
+
+현재 명세서 모듈들: ${currentSpec.modules.map(m => m.name).join(', ')}
+
+수정된 명세서를 JSON 형태로 응답해주세요.`;
+
+  try {
+    const modificationResponse = await callAI(modificationPrompt);
+    const updatedSpec = parseJSONFromResponse(modificationResponse);
+    
+    // Update session
+    sessionData.specification = updatedSpec;
+    sessionData.last_modified = new Date().toISOString();
+    sessions.set(session_id, sessionData);
+    
+    // Generate updated markdown
+    const markdownWithLang = generateMarkdownWithLanguage(updatedSpec, sessionData.platform);
+    
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: `## 명세서 수정 완료
+
+**수정 내용**: ${modification_request}
+**세션 ID**: \`${session_id}\`
+
+## 업데이트된 명세서
+
+${markdownWithLang}`
+          }
+        ]
+      }
+    }) + '\n');
+  } catch (error) {
+    throw new Error(`명세서 수정 실패: ${error.message}`);
+  }
+}
+
+async function handleExportSpecification(request) {
+  const { session_id, export_format = 'markdown', include_templates = false } = request.params.arguments;
+  
+  if (!session_id || !sessions.has(session_id)) {
+    throw new Error('명세서 세션을 찾을 수 없습니다.');
+  }
+  
+  const sessionData = sessions.get(session_id);
+  const specification = sessionData.specification;
+  
+  let exportContent;
+  if (export_format === 'markdown') {
+    exportContent = generateMarkdownWithLanguage(specification, sessionData.platform);
+  } else if (export_format === 'json') {
+    exportContent = JSON.stringify(specification, null, 2);
+  } else {
+    exportContent = generateMarkdownWithLanguage(specification, sessionData.platform);
+  }
+  
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: {
+      content: [
+        {
+          type: "text",
+          text: `## 명세서 내보내기 완료
+
+**형태**: ${export_format.toUpperCase()}
+**템플릿 포함**: ${include_templates ? '예' : '아니오'}
+**데이터 소스**: 세션 ID: ${session_id}
+
+${exportContent}`
+        }
+      ]
+    }
+  }) + '\n');
+}
+
+// Helper functions
+function getMainFeatures(platform) {
+  const features = {
+    mobile: 'Mobile UI, Touch Interface',
+    web: 'Web Interface, Browser Compatibility',
+    desktop: 'Desktop UI, System Integration',
+    api: 'REST API, Data Processing'
+  };
+  return features[platform] || 'General Purpose';
+}
+
+function generateMarkdownWithLanguage(specification, platform) {
+  const selectedTechStack = specification.techStack;
+  const totalFunctions = specification.modules.reduce((sum, module) => sum + (module.functions?.length || 0), 0);
+  const languageInfo = selectedTechStack ? selectedTechStack.stack.language : getDefaultLanguage(platform);
+
+  return `# ${specification.title || 'Mobile App'} 설계 명세서
+
+**프로젝트 타입**: ${platform}
+**프로그래밍 언어**: ${languageInfo}
+**복잡도**: complex
+**생성일**: ${new Date().toLocaleString('ko-KR')}
+
+## 프로젝트 설명
+
+${specification.description || `${platform} 프로젝트 (복잡도: complex)`}
+
+## 시스템 요구사항
+
+- **compatibility**: 시스템 호환성
+
+## 소프트웨어 설계 명세서
+
+${specification.modules.map(module => `### ${module.name} 모듈
+
+${module.description}
+
+| Function | Design Spec | Function Definition | Remarks |
+|----------|-------------|---------------------|----------|
+${module.functions ? module.functions.map(func => 
+  `| ${func.name} | ${func.description}<br/>- 에러 처리 및 예외 상황 대응<br/>- 로깅 및 디버깅 정보 기록<br/>- 성능 최적화 고려<br/>- 배터리 소모 최소화<br/>- UI 응답성 유지 | \`${func.returns || 'void'} ${func.name}(${func.parameters || ''})\` | ${func.remarks || '-'} |`
+).join('\n') : '| - | 기본 기능 | \`void init()\` | 모듈 초기화 |'}
+
+#### ${module.name} 모듈 상세 함수 명세
+
+${module.functions ? module.functions.map(func => `##### ${func.name}
+
+**반환값**: ${func.returns || 'void'}
+
+**테스트 케이스**:
+- **normal_case**: 정상적인 입력값으로 기능 테스트 → 성공적인 실행 및 예상 결과 반환
+- **edge_case**: 경계값 입력으로 테스트 → 경계 상황에서도 안정적 동작
+- **error_case**: 잘못된 입력값 처리 테스트 → 적절한 에러 메시지 또는 예외 처리
+- **performance_test**: 대용량 데이터 또는 부하 상황 테스트 → 성능 요구사항 만족
+`).join('\n') : '##### init
+
+**반환값**: void
+
+**테스트 케이스**:
+- **normal_case**: 정상적인 입력값으로 기능 테스트 → 성공적인 실행 및 예상 결과 반환
+- **edge_case**: 경계값 입력으로 테스트 → 경계 상황에서도 안정적 동작
+- **error_case**: 잘못된 입력값 처리 테스트 → 적절한 에러 메시지 또는 예외 처리
+- **performance_test**: 대용량 데이터 또는 부하 상황 테스트 → 성능 요구사항 만족'}
+`).join('\n')}
+
+## 명세서 정보
+
+- **총 모듈 수**: ${specification.modules.length}
+- **총 함수 수**: ${totalFunctions}
+- **복잡도 점수**: ${(specification.modules.length * 1.2 + totalFunctions * 0.3).toFixed(1)}
+- **생성 시간**: ${new Date().toLocaleString('ko-KR')}
+- **생성기 버전**: 1.0.0`;
+}
+
+function getDefaultLanguage(platform) {
+  const defaultLanguages = {
+    mobile: 'JavaScript/TypeScript (React Native)',
+    web: 'JavaScript/TypeScript',
+    desktop: 'JavaScript/TypeScript (Electron)',
+    api: 'JavaScript/TypeScript (Node.js)'
+  };
+  return defaultLanguages[platform] || 'JavaScript/TypeScript';
 }
 
 // Check for MCP mode

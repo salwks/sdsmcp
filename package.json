@@ -4,7 +4,7 @@
   "description": "Transform project descriptions into complete software specifications. Auto-detects project types, offers tech stack options, generates module/function tables plus development files.",
   "main": "sds.js",
   "bin": {
-    "sds": "./sds.js"
+    "sds": "sds.js"
   },
   "type": "module",
   "scripts": {
@@ -23,7 +23,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/salwks/sdsmcp.git"
+    "url": "git+https://github.com/salwks/sdsmcp.git"
   },
   "homepage": "https://github.com/salwks/sdsmcp",
   "engines": {

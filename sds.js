@@ -253,32 +253,25 @@ const techStackOptions = {
   ]
 };
 
-// Auto-detect project type
-function detectProjectType(description) {
-  const desc = description.toLowerCase();
+// Interactive project type selection
+async function selectProjectType() {
+  console.log('\n🎯 What type of project do you want to create?');
+  console.log('1. Mobile App (iOS/Android)');
+  console.log('2. Web Application (Browser-based)');
+  console.log('3. Backend/API (Server-side)');
+  console.log('4. Desktop Application');
   
-  // Check web first (more specific patterns)
-  if (desc.includes('web-based') || desc.includes('web application') || desc.includes('website') || desc.includes('browser') || desc.includes('web app')) {
+  const answer = await askQuestion('Select project type (1-4): ');
+  const choice = parseInt(answer);
+  
+  const types = ['mobile', 'web', 'backend', 'desktop'];
+  
+  if (choice >= 1 && choice <= 4) {
+    return types[choice - 1];
+  } else {
+    console.log('Invalid selection. Using web as default.');
     return 'web';
   }
-  // Then check mobile (avoid false positives from "application")
-  else if (desc.includes('mobile') || desc.includes('mobile app') || desc.includes('android') || desc.includes('ios') || desc.includes('smartphone')) {
-    return 'mobile';
-  } 
-  // Backend patterns
-  else if (desc.includes('api') || desc.includes('server') || desc.includes('backend') || desc.includes('microservice')) {
-    return 'backend';
-  }
-  // Desktop patterns
-  else if (desc.includes('desktop') || desc.includes('desktop application') || desc.includes('windows') || desc.includes('mac')) {
-    return 'desktop';
-  }
-  // Fallback: check for generic "app" last
-  else if (desc.includes('app') && !desc.includes('web') && !desc.includes('application')) {
-    return 'mobile';
-  }
-  
-  return 'web'; // default
 }
 
 // Interactive tech stack selection
@@ -298,12 +291,22 @@ async function selectTechStack(projectType) {
   const answer = await askQuestion(`Select tech stack (1-${options.length}): `);
   const choice = parseInt(answer);
   
+  let selectedStack;
   if (choice >= 1 && choice <= options.length) {
-    return options[choice - 1];
+    selectedStack = options[choice - 1];
   } else {
     console.log('Invalid selection. Using default.');
-    return options[0];
+    selectedStack = options[0];
   }
+  
+  // Ask for language preference
+  const langChoice = await askQuestion(`\n💬 Do you have a preferred language? (press enter for ${selectedStack.stack.language}): `);
+  if (langChoice.trim()) {
+    console.log(`✅ Custom language noted: ${langChoice}`);
+    selectedStack.stack.customLanguage = langChoice;
+  }
+  
+  return selectedStack;
 }
 
 // Actual AI API call
@@ -356,10 +359,10 @@ function parseJSONFromResponse(response, type = 'object') {
   }
 }
 
-async function generateSpecification(description, selectedTechStack) {
+// Step 1: Generate module list
+async function generateModuleList(description) {
   console.error('🤖 Step 1: AI basic structure analysis...');
   
-  // Step 1: Identify basic module structure
   const structurePrompt = `Project: "${description}"
 
 Please provide a list of all modules needed for this project as a JSON array:
@@ -371,7 +374,39 @@ Include at least 10-15 modules.`;
   const modules = parseJSONFromResponse(structureResponse, 'array');
   
   console.error(`✅ ${modules.length} modules identified`);
+  return modules;
+}
+
+// Interactive module selection
+async function selectModules(modules) {
+  console.log('\n📋 Suggested modules:');
+  modules.forEach((module, index) => {
+    console.log(`${index + 1}. ${module}`);
+  });
   
+  console.log('\nOptions:');
+  console.log('1. Use all modules (recommended)');
+  console.log('2. Select specific modules');
+  console.log('3. Add custom modules');
+  
+  const choice = await askQuestion('Choose option (1-3): ');
+  
+  if (choice === '1') {
+    return modules;
+  } else if (choice === '2') {
+    const indices = await askQuestion('Enter module numbers (comma-separated, e.g., 1,3,5): ');
+    const selectedIndices = indices.split(',').map(i => parseInt(i.trim()) - 1);
+    return selectedIndices.map(i => modules[i]).filter(Boolean);
+  } else if (choice === '3') {
+    const customModules = await askQuestion('Enter additional modules (comma-separated): ');
+    return [...modules, ...customModules.split(',').map(m => m.trim())];
+  }
+  
+  return modules; // default
+}
+
+// Step 2: Generate detailed specification
+async function generateSpecification(description, selectedTechStack, selectedModules) {
   const specification = {
     title: "Project Specification",
     description,
@@ -383,9 +418,9 @@ Include at least 10-15 modules.`;
   
   // Process modules in parallel batches of 3 to avoid rate limits
   const batchSize = 3;
-  for (let i = 0; i < modules.length; i += batchSize) {
-    const batch = modules.slice(i, i + batchSize);
-    console.error(`  📦 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(modules.length/batchSize)} (${batch.length} modules)...`);
+  for (let i = 0; i < selectedModules.length; i += batchSize) {
+    const batch = selectedModules.slice(i, i + batchSize);
+    console.error(`  📦 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(selectedModules.length/batchSize)} (${batch.length} modules)...`);
     
     const batchPromises = batch.map(async (moduleName) => {
       console.error(`  - Detailing ${moduleName} module...`);
@@ -429,7 +464,7 @@ Include 3-5 functions per module.`;
     });
     
     // Small delay between batches to respect rate limits
-    if (i + batchSize < modules.length) {
+    if (i + batchSize < selectedModules.length) {
       console.error(`  ⏱️ Brief pause before next batch...`);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -561,17 +596,23 @@ async function main() {
   try {
     const description = process.argv[2];
     
-    // Auto-detect project type
-    const projectType = detectProjectType(description);
-    console.log(`\n🎯 Detected project type: ${projectType}`);
+    // Select project type
+    const projectType = await selectProjectType();
     
     // Select tech stack
     const selectedTechStack = await selectTechStack(projectType);
     console.log(`\n✅ Selected tech stack: ${selectedTechStack.name}`);
+    
+    // Generate module list
+    const moduleList = await generateModuleList(description);
+    
+    // Let user select modules
+    const selectedModules = await selectModules(moduleList);
+    console.log(`\n✅ Selected ${selectedModules.length} modules for detailed specification`);
     console.log('Starting specification generation...\n');
     
-    // Generate specification
-    const specification = await generateSpecification(description, selectedTechStack);
+    // Generate detailed specification
+    const specification = await generateSpecification(description, selectedTechStack, selectedModules);
     
     const totalFunctions = specification.modules.reduce((sum, module) => sum + (module.functions?.length || 0), 0);
     console.error('\n🏆 Success!');

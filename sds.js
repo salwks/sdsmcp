@@ -69,7 +69,7 @@ function loadPipedInput() {
 // API call functions with timeout
 async function callClaude(prompt) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
+  const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
   
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -97,7 +97,7 @@ async function callClaude(prompt) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Request timeout after 30 seconds');
+      throw new Error(`Request timeout after ${CONFIG.timeout/1000} seconds`);
     }
     throw error;
   }
@@ -105,7 +105,7 @@ async function callClaude(prompt) {
 
 async function callOpenAI(prompt) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
+  const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
   
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -132,7 +132,7 @@ async function callOpenAI(prompt) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Request timeout after 30 seconds');
+      throw new Error(`Request timeout after ${CONFIG.timeout/1000} seconds`);
     }
     throw error;
   }
@@ -140,7 +140,7 @@ async function callOpenAI(prompt) {
 
 async function callPerplexity(prompt) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
+  const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
   
   try {
     const response = await fetch('https://api.perplexity.ai/chat/completions', {
@@ -167,25 +167,40 @@ async function callPerplexity(prompt) {
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Request timeout after 30 seconds');
+      throw new Error(`Request timeout after ${CONFIG.timeout/1000} seconds`);
     }
     throw error;
   }
 }
 
-// Check available APIs and select one
+// Configuration with defaults
+const CONFIG = {
+  timeout: parseInt(process.env.API_TIMEOUT) || 30000,
+  batchSize: parseInt(process.env.BATCH_SIZE) || 3,
+  batchDelay: parseInt(process.env.BATCH_DELAY) || 1000,
+  preferredAPI: process.env.PREFERRED_API || 'claude'
+};
+
+// Check available APIs and select best one
 function getAvailableAPI() {
   const apis = [
-    { name: 'Claude', func: callClaude, key: process.env.ANTHROPIC_API_KEY },
-    { name: 'OpenAI', func: callOpenAI, key: process.env.OPENAI_API_KEY },
-    { name: 'Perplexity', func: callPerplexity, key: process.env.PERPLEXITY_API_KEY }
+    { name: 'claude', display: 'Claude', func: callClaude, key: process.env.ANTHROPIC_API_KEY, priority: 1 },
+    { name: 'openai', display: 'OpenAI', func: callOpenAI, key: process.env.OPENAI_API_KEY, priority: 2 },
+    { name: 'perplexity', display: 'Perplexity', func: callPerplexity, key: process.env.PERPLEXITY_API_KEY, priority: 3 }
   ].filter(api => api.key);
   
   if (apis.length === 0) {
     throw new Error('No API keys configured. Check your .env file.');
   }
   
-  return apis[0]; // Use first available API
+  // Try to use preferred API first
+  const preferred = apis.find(api => api.name === CONFIG.preferredAPI.toLowerCase());
+  if (preferred) {
+    return preferred;
+  }
+  
+  // Fall back to priority order
+  return apis.sort((a, b) => a.priority - b.priority)[0];
 }
 
 // Tech stack options by project type
@@ -376,16 +391,22 @@ async function selectTechStack(projectType) {
   return selectedStack;
 }
 
-// Actual AI API call
-async function callAI(prompt) {
+// Enhanced AI API call with retry logic
+async function callAI(prompt, retries = 1) {
   const api = getAvailableAPI();
-  console.error(`🤖 Using ${api.name} API...`);
+  console.error(`🤖 Using ${api.display} API...`);
   
-  try {
-    return await api.func(prompt);
-  } catch (error) {
-    console.error(`❌ ${api.name} API error:`, error.message);
-    throw error;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await api.func(prompt);
+    } catch (error) {
+      if (attempt === retries) {
+        console.error(`❌ ${api.display} API error after ${retries + 1} attempts:`, error.message);
+        throw new Error(`${api.display} API failed: ${error.message}`);
+      }
+      console.error(`⚠️ ${api.display} API attempt ${attempt + 1} failed, retrying...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
 }
 
@@ -483,8 +504,8 @@ async function generateSpecification(description, selectedTechStack, selectedMod
 
   console.error('🔧 Step 2: Detailing each module...');
   
-  // Process modules in parallel batches of 3 to avoid rate limits
-  const batchSize = 3;
+  // Process modules in parallel batches to avoid rate limits
+  const batchSize = CONFIG.batchSize;
   for (let i = 0; i < selectedModules.length; i += batchSize) {
     const batch = selectedModules.slice(i, i + batchSize);
     console.error(`  📦 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(selectedModules.length/batchSize)} (${batch.length} modules)...`);
@@ -533,7 +554,7 @@ Include 3-5 functions per module.`;
     // Small delay between batches to respect rate limits
     if (i + batchSize < selectedModules.length) {
       console.error(`  ⏱️ Brief pause before next batch...`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, CONFIG.batchDelay));
     }
   }
 
@@ -1063,7 +1084,7 @@ ${module.functions ? module.functions.map(func => `##### ${func.name}
 - **edge_case**: 경계값 입력으로 테스트 → 경계 상황에서도 안정적 동작
 - **error_case**: 잘못된 입력값 처리 테스트 → 적절한 에러 메시지 또는 예외 처리
 - **performance_test**: 대용량 데이터 또는 부하 상황 테스트 → 성능 요구사항 만족
-`).join('\n') : '##### init
+`).join('\n') : `##### init
 
 **반환값**: void
 
@@ -1071,7 +1092,7 @@ ${module.functions ? module.functions.map(func => `##### ${func.name}
 - **normal_case**: 정상적인 입력값으로 기능 테스트 → 성공적인 실행 및 예상 결과 반환
 - **edge_case**: 경계값 입력으로 테스트 → 경계 상황에서도 안정적 동작
 - **error_case**: 잘못된 입력값 처리 테스트 → 적절한 에러 메시지 또는 예외 처리
-- **performance_test**: 대용량 데이터 또는 부하 상황 테스트 → 성능 요구사항 만족'}
+- **performance_test**: 대용량 데이터 또는 부하 상황 테스트 → 성능 요구사항 만족`}
 `).join('\n')}
 
 ## 명세서 정보

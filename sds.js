@@ -1085,7 +1085,7 @@ async function startMCPServer() {
   
   const server = {
     name: "sds-generator",
-    version: "1.0.18",
+    version: "1.0.19",
     tools: [
       {
         name: "analyze_project_request",

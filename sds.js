@@ -60,6 +60,169 @@ function detectLanguage(text) {
   return koreanRegex.test(text) ? 'ko' : 'en';
 }
 
+// Get file extension based on tech stack language
+function getFileExtension(techStack) {
+  if (!techStack || !techStack.stack || !techStack.stack.language) {
+    return '.js'; // fallback
+  }
+  
+  const language = techStack.stack.language.toLowerCase();
+  
+  if (language.includes('swift')) return '.swift';
+  if (language.includes('dart')) return '.dart';
+  if (language.includes('java')) return '.java';
+  if (language.includes('python')) return '.py';
+  if (language.includes('kotlin')) return '.kt';
+  if (language.includes('c++') || language.includes('cpp')) return '.cpp';
+  if (language.includes('c#')) return '.cs';
+  
+  return '.js'; // default fallback
+}
+
+// Generate language-specific code template
+function generateCodeTemplate(module, techStack) {
+  const language = techStack?.stack?.language?.toLowerCase() || '';
+  
+  if (language.includes('swift')) {
+    return generateSwiftTemplate(module);
+  } else if (language.includes('dart')) {
+    return generateDartTemplate(module);
+  } else if (language.includes('java')) {
+    return generateJavaTemplate(module);
+  } else if (language.includes('python')) {
+    return generatePythonTemplate(module);
+  } else {
+    return generateJavaScriptTemplate(module);
+  }
+}
+
+// Swift template
+function generateSwiftTemplate(module) {
+  return `// ${module.name} Module
+// ${module.description}
+
+import Foundation
+
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map(func => `
+/**
+ * ${func.purpose}
+ */
+${func.functionDefinition || `func ${func.name}() {
+    // TODO: Implement ${func.name}
+    fatalError("Not implemented")
+}`}
+`).join('\n') : 
+`
+// TODO: Implement ${module.name} module functions
+func initialize() {
+    // TODO: Initialize ${module.name} module
+}
+`}`;
+}
+
+// Dart template  
+function generateDartTemplate(module) {
+  return `// ${module.name} Module
+// ${module.description}
+
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map(func => `
+/**
+ * ${func.purpose}
+ */
+${func.functionDefinition || `void ${func.name}() {
+  // TODO: Implement ${func.name}
+  throw UnimplementedError('${func.name} not implemented');
+}`}
+`).join('\n') : 
+`
+// TODO: Implement ${module.name} module functions
+void initialize() {
+  // TODO: Initialize ${module.name} module
+}
+`}`;
+}
+
+// JavaScript template (existing)
+function generateJavaScriptTemplate(module) {
+  return `// ${module.name} Module
+// ${module.description}
+
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map(func => `
+/**
+ * ${func.purpose}
+ * @param {*} ${Array.isArray(func.parameters) ? func.parameters.join(' @param {*} ') : func.parameters || ''}
+ * @returns {*} ${func.returnValue}
+ */
+function ${func.name}(${Array.isArray(func.parameters) ? func.parameters.join(', ') : func.parameters || ''}) {
+  // TODO: Implement ${func.name}
+  throw new Error('Not implemented');
+}
+`).join('\n') : 
+`
+// TODO: Implement ${module.name} module functions
+function init() {
+  // TODO: Initialize ${module.name} module
+}
+`}
+
+module.exports = {
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map(func => `  ${func.name}`).join(',\n') : 
+  '  init'
+}
+};`;
+}
+
+// Java template
+function generateJavaTemplate(module) {
+  const className = module.name.replace(/\s+/g, '');
+  return `// ${module.name} Module
+// ${module.description}
+
+public class ${className} {
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map(func => `
+    /**
+     * ${func.purpose}
+     */
+    ${func.functionDefinition || `public void ${func.name}() {
+        // TODO: Implement ${func.name}
+        throw new UnsupportedOperationException("Not implemented");
+    }`}
+`).join('\n') : 
+`
+    // TODO: Implement ${module.name} module functions
+    public void initialize() {
+        // TODO: Initialize ${module.name} module
+    }
+`}
+}`;
+}
+
+// Python template
+function generatePythonTemplate(module) {
+  return `# ${module.name} Module
+# ${module.description}
+
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map(func => `
+def ${func.name}():
+    """${func.purpose}"""
+    # TODO: Implement ${func.name}
+    raise NotImplementedError("${func.name} not implemented")
+`).join('\n') : 
+`
+# TODO: Implement ${module.name} module functions
+def initialize():
+    """Initialize ${module.name} module"""
+    # TODO: Initialize ${module.name} module
+    pass
+`}`;
+}
+
 // Tech stack options by project type
 const techStackOptions = {
   mobile: [
@@ -521,36 +684,9 @@ async function createSDSDirectory(specification, dirPath) {
     
     // Create module template files
     for (const module of specification.modules) {
-      const modulePath = path.join(dirPath, `${module.name.toLowerCase().replace(/\s+/g, '_')}.js`);
-      const moduleTemplate = `// ${module.name} Module
-// ${module.description}
-
-${module.functions && module.functions.length > 0 ? 
-  module.functions.map(func => `
-/**
- * ${func.purpose}
- * @param {*} ${Array.isArray(func.parameters) ? func.parameters.join(' @param {*} ') : func.parameters || ''}
- * @returns {*} ${func.returnValue}
- */
-function ${func.name}(${Array.isArray(func.parameters) ? func.parameters.join(', ') : func.parameters || ''}) {
-  // TODO: Implement ${func.name}
-  throw new Error('Not implemented');
-}
-`).join('\n') : 
-`
-// TODO: Implement ${module.name} module functions
-function init() {
-  // TODO: Initialize ${module.name} module
-}
-`}
-
-module.exports = {
-${module.functions && module.functions.length > 0 ? 
-  module.functions.map(func => `  ${func.name}`).join(',\n') : 
-  '  init'
-}
-};
-`;
+      const fileExtension = getFileExtension(specification.techStack);
+      const modulePath = path.join(dirPath, `${module.name.toLowerCase().replace(/\s+/g, '_')}${fileExtension}`);
+      const moduleTemplate = generateCodeTemplate(module, specification.techStack);
       await fs.writeFile(modulePath, moduleTemplate);
     }
     

@@ -50,7 +50,7 @@ node sds.js "project description"
 ### Example
 
 ```bash
-sds "혈당 모니터링 앱을 모바일로 만들려고 해. 사용자가 혈당 수치를 입력하고 기록할 수 있고, 그래프로 추이를 볼 수 있으며, 목표 범위를 설정하고 알림을 받을 수 있는 기능이 필요해."
+sds "I want to create a mobile blood sugar monitoring app. Users should be able to input and record blood sugar levels, view trends in graphs, set target ranges, and receive notifications."
 ```
 
 Process:

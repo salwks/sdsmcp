@@ -1,290 +1,319 @@
 #!/usr/bin/env node
-import axios from 'axios';
+
 import fs from 'fs/promises';
 import path from 'path';
 import readline from 'readline';
 
-// .env 파일 로드
+// Load .env file
 async function loadEnv() {
   try {
     const envContent = await fs.readFile('.env', 'utf8');
     const lines = envContent.split('\n');
     for (const line of lines) {
-      const [key, value] = line.split('=');
-      if (key && value) {
-        process.env[key.trim()] = value.trim();
+      if (line.trim() && !line.startsWith('#')) {
+        const [key, ...valueParts] = line.split('=');
+        if (key && valueParts.length > 0) {
+          const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+          process.env[key.trim()] = value.trim();
+        }
       }
     }
   } catch (error) {
-    console.error('⚠️ .env 파일을 찾을 수 없습니다.');
+    console.error('⚠️ .env file not found.');
   }
 }
 
-await loadEnv();
-
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY;
-
+// Create readline interface
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
 
-// API 호출 함수들
-async function callAnthropic(prompt) {
-  const response = await axios.post('https://api.anthropic.com/v1/messages', {
-    model: 'claude-3-5-sonnet-20241022',
-    max_tokens: 4000,
-    messages: [{ role: 'user', content: prompt }]
-  }, {
+// Question helper function
+function askQuestion(query) {
+  return new Promise(resolve => rl.question(query, resolve));
+}
+
+// API call functions
+async function callClaude(prompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
     headers: {
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json'
-    }
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }]
+    })
   });
   
-  return response.data.content[0].text;
+  if (!response.ok) {
+    throw new Error(`Claude API error: ${response.status}`);
+  }
+  
+  const data = await response.json();
+  return data.content[0].text;
 }
 
 async function callOpenAI(prompt) {
-  const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-    model: 'gpt-4o',
-    max_tokens: 4000,
-    messages: [{ role: 'user', content: prompt }]
-  }, {
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
     headers: {
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json'
-    }
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4000
+    })
   });
   
-  return response.data.choices[0].message.content;
+  if (!response.ok) {
+    throw new Error(`OpenAI API error: ${response.status}`);
+  }
+  
+  const data = await response.json();
+  return data.choices[0].message.content;
 }
 
 async function callPerplexity(prompt) {
-  const response = await axios.post('https://api.perplexity.ai/chat/completions', {
-    model: 'llama-3.1-sonar-large-128k-online',
-    max_tokens: 4000,
-    messages: [{ role: 'user', content: prompt }]
-  }, {
+  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+    method: 'POST',
     headers: {
-      'Authorization': `Bearer ${PERPLEXITY_API_KEY}`,
-      'Content-Type': 'application/json'
-    }
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'llama-3.1-sonar-large-128k-online',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4000
+    })
   });
   
-  return response.data.choices[0].message.content;
+  if (!response.ok) {
+    throw new Error(`Perplexity API error: ${response.status}`);
+  }
+  
+  const data = await response.json();
+  return data.choices[0].message.content;
 }
 
-// 사용 가능한 API 확인 및 선택
+// Check available APIs and select one
 function getAvailableAPI() {
-  if (ANTHROPIC_API_KEY) return { name: 'Anthropic', call: callAnthropic };
-  if (OPENAI_API_KEY) return { name: 'OpenAI', call: callOpenAI };
-  if (PERPLEXITY_API_KEY) return { name: 'Perplexity', call: callPerplexity };
-  throw new Error('API 키가 설정되지 않았습니다. .env 파일을 확인해주세요.');
+  const apis = [
+    { name: 'Claude', func: callClaude, key: process.env.ANTHROPIC_API_KEY },
+    { name: 'OpenAI', func: callOpenAI, key: process.env.OPENAI_API_KEY },
+    { name: 'Perplexity', func: callPerplexity, key: process.env.PERPLEXITY_API_KEY }
+  ].filter(api => api.key);
+  
+  if (apis.length === 0) {
+    throw new Error('No API keys configured. Check your .env file.');
+  }
+  
+  return apis[0]; // Use first available API
 }
 
-// 프로젝트 유형별 기술 스택 옵션
+// Tech stack options by project type
 const techStackOptions = {
   mobile: [
     {
-      name: "React Native",
+      id: 1,
+      name: 'React Native',
       stack: {
-        language: "JavaScript/TypeScript",
-        framework: "React Native",
-        stateManagement: "Redux Toolkit",
-        database: { local: "SQLite", cloud: "Firebase Firestore" },
-        ui: "React Native Elements",
-        navigation: "React Navigation"
-      },
-      deps: ["react-native", "@react-navigation/native", "react-native-sqlite-storage"]
+        language: 'JavaScript/TypeScript',
+        framework: 'React Native',
+        stateManagement: 'Redux Toolkit / Zustand',
+        database: ['AsyncStorage', 'SQLite', 'Firebase'],
+        testing: 'Jest + React Native Testing Library',
+        deployment: 'App Store / Google Play'
+      }
     },
     {
-      name: "Flutter",
+      id: 2,
+      name: 'Flutter',
       stack: {
-        language: "Dart",
-        framework: "Flutter",
-        stateManagement: "Provider/Riverpod",
-        database: { local: "SQLite", cloud: "Firebase Firestore" },
-        ui: "Material Design",
-        navigation: "Flutter Navigator"
-      },
-      deps: ["flutter", "provider", "sqflite", "firebase_core"]
+        language: 'Dart',
+        framework: 'Flutter',
+        stateManagement: 'Provider / Riverpod / Bloc',
+        database: ['Hive', 'SQLite', 'Firebase'],
+        testing: 'Flutter Test Framework',
+        deployment: 'App Store / Google Play'
+      }
     },
     {
-      name: "Native iOS (Swift)",
+      id: 3,
+      name: 'Native iOS (Swift)',
       stack: {
-        language: "Swift",
-        framework: "UIKit/SwiftUI",
-        stateManagement: "Combine",
-        database: { local: "Core Data", cloud: "CloudKit" },
-        ui: "SwiftUI",
-        navigation: "NavigationStack"
-      },
-      deps: ["UIKit", "SwiftUI", "Combine", "CoreData"]
+        language: 'Swift',
+        framework: 'UIKit / SwiftUI',
+        stateManagement: 'Core Data / Combine',
+        database: ['Core Data', 'SQLite', 'CloudKit'],
+        testing: 'XCTest',
+        deployment: 'App Store'
+      }
     },
     {
-      name: "Native Android (Kotlin)",
+      id: 4,
+      name: 'Native Android (Kotlin)',
       stack: {
-        language: "Kotlin",
-        framework: "Android SDK",
-        stateManagement: "ViewModel",
-        database: { local: "Room", cloud: "Firebase" },
-        ui: "Jetpack Compose",
-        navigation: "Navigation Component"
-      },
-      deps: ["androidx.compose", "androidx.room", "androidx.navigation"]
+        language: 'Kotlin',
+        framework: 'Android Jetpack',
+        stateManagement: 'ViewModel / LiveData',
+        database: ['Room', 'SQLite', 'Firebase'],
+        testing: 'JUnit + Espresso',
+        deployment: 'Google Play'
+      }
     }
   ],
   web: [
     {
-      name: "React/Next.js",
+      id: 1,
+      name: 'React/Next.js',
       stack: {
-        language: "JavaScript/TypeScript",
-        framework: "Next.js",
-        stateManagement: "Zustand/Redux",
-        database: "PostgreSQL",
-        ui: "Tailwind CSS",
-        backend: "API Routes"
-      },
-      deps: ["next", "react", "tailwindcss", "prisma"]
+        language: 'JavaScript/TypeScript',
+        framework: 'Next.js',
+        stateManagement: 'Redux Toolkit / Zustand',
+        database: ['PostgreSQL', 'MongoDB', 'Prisma'],
+        testing: 'Jest + React Testing Library',
+        deployment: 'Vercel / Netlify'
+      }
     },
     {
-      name: "Vue/Nuxt",
+      id: 2,
+      name: 'Vue/Nuxt',
       stack: {
-        language: "JavaScript/TypeScript", 
-        framework: "Nuxt.js",
-        stateManagement: "Pinia",
-        database: "MongoDB",
-        ui: "Vuetify",
-        backend: "Express"
-      },
-      deps: ["nuxt", "vue", "pinia", "vuetify"]
+        language: 'JavaScript/TypeScript',
+        framework: 'Nuxt.js',
+        stateManagement: 'Pinia / Vuex',
+        database: ['PostgreSQL', 'MongoDB', 'Prisma'],
+        testing: 'Vitest + Vue Testing Utils',
+        deployment: 'Vercel / Netlify'
+      }
     }
   ],
   backend: [
     {
-      name: "Node.js/Express",
+      id: 1,
+      name: 'Node.js/Express',
       stack: {
-        language: "JavaScript/TypeScript",
-        framework: "Express.js",
-        database: "PostgreSQL/MongoDB",
-        orm: "Prisma/Mongoose",
-        auth: "JWT",
-        testing: "Jest"
-      },
-      deps: ["express", "prisma", "jsonwebtoken", "bcrypt"]
+        language: 'JavaScript/TypeScript',
+        framework: 'Express.js',
+        stateManagement: 'N/A',
+        database: ['PostgreSQL', 'MongoDB', 'Redis'],
+        testing: 'Jest + Supertest',
+        deployment: 'Docker / AWS / Heroku'
+      }
     },
     {
-      name: "Python/FastAPI",
+      id: 2,
+      name: 'Python/FastAPI',
       stack: {
-        language: "Python",
-        framework: "FastAPI",
-        database: "PostgreSQL",
-        orm: "SQLAlchemy",
-        auth: "OAuth2",
-        testing: "pytest"
-      },
-      deps: ["fastapi", "sqlalchemy", "uvicorn", "pytest"]
+        language: 'Python',
+        framework: 'FastAPI',
+        stateManagement: 'N/A',
+        database: ['PostgreSQL', 'MongoDB', 'Redis'],
+        testing: 'pytest + httpx',
+        deployment: 'Docker / AWS / Heroku'
+      }
     }
   ],
   desktop: [
     {
-      name: "Electron",
+      id: 1,
+      name: 'Electron',
       stack: {
-        language: "JavaScript/TypeScript",
-        framework: "Electron",
-        ui: "React/Vue",
-        database: "SQLite",
-        packaging: "electron-builder"
-      },
-      deps: ["electron", "react", "sqlite3", "electron-builder"]
+        language: 'JavaScript/TypeScript',
+        framework: 'Electron + React',
+        stateManagement: 'Redux / Context API',
+        database: ['SQLite', 'NeDB', 'IndexedDB'],
+        testing: 'Jest + Spectron',
+        deployment: 'GitHub Releases / Windows Store'
+      }
     },
     {
-      name: "Tauri",
+      id: 2,
+      name: 'Tauri',
       stack: {
-        language: "Rust + JavaScript",
-        framework: "Tauri",
-        ui: "React/Vue/Svelte",
-        database: "SQLite",
-        packaging: "Native"
-      },
-      deps: ["tauri", "react", "rusqlite"]
+        language: 'Rust + JavaScript',
+        framework: 'Tauri',
+        stateManagement: 'Rust State / Frontend State',
+        database: ['SQLite', 'sled', 'PostgreSQL'],
+        testing: 'cargo test + Jest',
+        deployment: 'GitHub Releases / Native Installers'
+      }
     }
   ]
 };
 
+// Auto-detect project type
 function detectProjectType(description) {
   const desc = description.toLowerCase();
   
-  if (desc.includes('모바일') || desc.includes('앱') || desc.includes('안드로이드') || desc.includes('ios')) {
+  if (desc.includes('mobile') || desc.includes('app') || desc.includes('android') || desc.includes('ios')) {
     return 'mobile';
-  } else if (desc.includes('웹사이트') || desc.includes('브라우저') || desc.includes('웹')) {
+  } else if (desc.includes('website') || desc.includes('browser') || desc.includes('web')) {
     return 'web';
-  } else if (desc.includes('api') || desc.includes('서버') || desc.includes('백엔드')) {
-    return 'backend';  
-  } else if (desc.includes('데스크톱') || desc.includes('윈도우') || desc.includes('맥')) {
+  } else if (desc.includes('api') || desc.includes('server') || desc.includes('backend')) {
+    return 'backend';
+  } else if (desc.includes('desktop') || desc.includes('windows') || desc.includes('mac')) {
     return 'desktop';
-  } else {
-    return 'web'; // 기본값
   }
+  
+  return 'web'; // default
 }
 
-function askQuestion(question) {
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      resolve(answer);
-    });
-  });
-}
-
+// Interactive tech stack selection
 async function selectTechStack(projectType) {
   const options = techStackOptions[projectType];
-  
-  console.log(`\n🔧 ${projectType} 프로젝트 기술 스택 선택:`);
-  options.forEach((option, idx) => {
-    console.log(`${idx + 1}. ${option.name}`);
-    console.log(`   언어: ${option.stack.language}`);
-    console.log(`   프레임워크: ${option.stack.framework}\n`);
+  if (!options) {
+    throw new Error(`Unsupported project type: ${projectType}`);
+  }
+
+  console.log(`\n🔧 Select tech stack for ${projectType} project:`);
+  options.forEach((option, index) => {
+    console.log(`${index + 1}. ${option.name}`);
+    console.log(`   Language: ${option.stack.language}`);
+    console.log(`   Framework: ${option.stack.framework}\n`);
   });
+
+  const answer = await askQuestion(`Select tech stack (1-${options.length}): `);
+  const choice = parseInt(answer);
   
-  const answer = await askQuestion(`기술 스택을 선택하세요 (1-${options.length}): `);
-  const choice = parseInt(answer) - 1;
-  
-  if (choice >= 0 && choice < options.length) {
-    return options[choice];
+  if (choice >= 1 && choice <= options.length) {
+    return options[choice - 1];
   } else {
-    console.log('잘못된 선택입니다. 기본값을 사용합니다.');
+    console.log('Invalid selection. Using default.');
     return options[0];
   }
 }
 
-// 실제 AI API 호출
+// Actual AI API call
 async function callAI(prompt) {
   const api = getAvailableAPI();
-  console.error(`🤖 ${api.name} API 사용 중...`);
+  console.error(`🤖 Using ${api.name} API...`);
   
   try {
-    const response = await api.call(prompt);
-    return response;
+    return await api.func(prompt);
   } catch (error) {
-    console.error(`❌ ${api.name} API 오류:`, error.message);
+    console.error(`❌ ${api.name} API error:`, error.message);
     throw error;
   }
 }
 
-// AI 응답에서 JSON 파싱 (강화된 파싱)
+// Enhanced JSON parsing from AI response
 function parseJSONFromResponse(response, type = 'object') {
   try {
-    // 1. 코드 블록 제거
+    // 1. Remove code blocks
     let cleanResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '');
     
-    // 2. 주석 제거
+    // 2. Remove comments
     cleanResponse = cleanResponse.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
     
-    // 3. JSON 패턴 추출
+    // 3. Extract JSON pattern
     let jsonMatch;
     if (type === 'array') {
       jsonMatch = cleanResponse.match(/\[[\s\S]*\]/);
@@ -293,201 +322,237 @@ function parseJSONFromResponse(response, type = 'object') {
     }
     
     if (!jsonMatch) {
-      throw new Error('JSON 패턴을 찾을 수 없습니다');
+      throw new Error('No JSON pattern found');
     }
     
     let jsonString = jsonMatch[0];
     
-    // 4. 잘못된 쉼표 제거 (trailing commas)
+    // 4. Remove trailing commas
     jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
     
-    // 5. 제어 문자 제거
+    // 5. Remove control characters
     jsonString = jsonString.replace(/[\x00-\x1F\x7F]/g, '');
     
-    // 6. 파싱 시도
+    // 6. Parse
     return JSON.parse(jsonString);
-    
   } catch (error) {
-    console.error('JSON 파싱 실패, 원본 응답:', response.substring(0, 200));
-    throw new Error(`JSON 파싱 오류: ${error.message}`);
+    console.error('JSON parsing failed, original response:', response.substring(0, 200));
+    throw new Error(`JSON parsing error: ${error.message}`);
   }
 }
 
 async function generateSpecification(description, selectedTechStack) {
-  console.error('🤖 1단계: AI 기본 구조 분석...');
+  console.error('🤖 Step 1: AI basic structure analysis...');
   
-  // 1단계: 기본 모듈 구조 파악
-  const structurePrompt = `프로젝트: "${description}"
+  // Step 1: Identify basic module structure
+  const structurePrompt = `Project: "${description}"
 
-이 프로젝트에 필요한 모든 모듈 목록을 JSON 배열로 제공해주세요:
-["모듈명1", "모듈명2", "모듈명3", ...]
+Please provide a list of all modules needed for this project as a JSON array:
+["Module1", "Module2", "Module3", ...]
 
-최소 10-15개 모듈을 포함해주세요.`;
+Include at least 10-15 modules.`;
 
   const structureResponse = await callAI(structurePrompt);
   const modules = parseJSONFromResponse(structureResponse, 'array');
   
-  console.error(`✅ ${modules.length}개 모듈 식별됨`);
+  console.error(`✅ ${modules.length} modules identified`);
   
   const specification = {
-    title: "혈당 모니터링 모바일 앱",
+    title: "Blood Sugar Monitoring Mobile App",
     description,
     techStack: selectedTechStack,
     modules: []
   };
 
-  console.error('🔧 2단계: 각 모듈 상세화...');
+  console.error('🔧 Step 2: Detailing each module...');
   
   for (const moduleName of modules) {
-    console.error(`  - ${moduleName} 모듈 상세화 중...`);
+    console.error(`  - Detailing ${moduleName} module...`);
     
     try {
-      const modulePrompt = `"${moduleName}" 모듈을 상세히 설계해주세요.
+      const modulePrompt = `Please design the "${moduleName}" module in detail.
 
-JSON 형식으로 응답해주세요:
+Respond in JSON format:
 {
-  "name": "${moduleName}",
-  "description": "상세한 모듈 설명",
+  "name": "Module name",
+  "description": "Detailed module description",
   "functions": [
     {
-      "name": "함수명",
-      "description": "함수 설명", 
-      "parameters": "매개변수 목록",
-      "returns": "반환값 설명"
+      "name": "Function name",
+      "description": "Function description", 
+      "parameters": "Parameter list",
+      "returns": "Return value description"
     }
   ]
 }
 
-각 모듈당 3-5개 함수를 포함해주세요.`;
+Include 3-5 functions per module.`;
 
       const moduleResponse = await callAI(modulePrompt);
-      const moduleData = parseJSONFromResponse(moduleResponse, 'object');
+      const moduleData = parseJSONFromResponse(moduleResponse);
       specification.modules.push(moduleData);
-      console.error(`    ✓ ${moduleData.functions?.length || 0}개 함수 생성됨`);
+      console.error(`    ✓ ${moduleData.functions?.length || 0} functions generated`);
     } catch (error) {
-      console.error(`    ❌ ${moduleName} 모듈 실패: ${error.message}`);
+      console.error(`    ❌ ${moduleName} module failed: ${error.message}`);
     }
   }
 
-  console.error('\n📋 3단계: 명세서 정리...');
+  console.error('\n📋 Step 3: Organizing specification...');
   
-  const totalFunctions = specification.modules.reduce((sum, mod) => sum + (mod.functions?.length || 0), 0);
-  
-  // 선택된 기술 스택으로 마크다운 생성
-  const markdown = `# ${specification.title}
-
-## 개요
-${specification.description}
-
-## 선택된 기술 스택: ${selectedTechStack.name}
-- **언어**: ${selectedTechStack.stack.language}
-- **프레임워크**: ${selectedTechStack.stack.framework}
-- **상태관리**: ${selectedTechStack.stack.stateManagement}
-- **데이터베이스**: ${JSON.stringify(selectedTechStack.stack.database)}
-- **UI**: ${selectedTechStack.stack.ui || selectedTechStack.stack.navigation}
-
-## 주요 의존성
-\`\`\`
-${selectedTechStack.deps.join('\n')}
-\`\`\`
-
-## 소프트웨어 설계 명세서 (총 ${specification.modules.length}개 모듈, ${totalFunctions}개 함수)
-
-| Module | Function | Design Spec | Function Definition | Remarks |
-|--------|----------|-------------|---------------------|---------|
-${specification.modules.map(module => 
-  module.functions?.map(func => 
-    `| ${module.name} | ${func.name} | ${func.description} | \`${func.parameters}\` | ${func.returns} |`
-  ).join('\n') || `| ${module.name} | - | ${module.description} | - | 함수 없음 |`
-).join('\n')}
-
-## 모듈 상세 정보
-
-${specification.modules.map(module => `
-### ${module.name}
-${module.description}
-
-**포함 함수**: ${module.functions?.length || 0}개
-${module.functions?.map(func => `- **${func.name}**: ${func.description}`).join('\n') || ''}
-`).join('')}
-`;
-
-  return { specification, markdown };
+  return specification;
 }
 
-async function generateDevelopmentFiles(specification) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const sdsDir = `.sds/${timestamp}`;
-  
+// Generate markdown with selected tech stack
+function generateMarkdown(specification) {
+  const selectedTechStack = specification.techStack;
+  const totalFunctions = specification.modules.reduce((sum, module) => sum + (module.functions?.length || 0), 0);
+
+  return `# ${specification.title}
+
+## Overview
+${specification.description}
+
+## Selected Tech Stack: ${selectedTechStack.name}
+- **Language**: ${selectedTechStack.stack.language}
+- **Framework**: ${selectedTechStack.stack.framework}
+- **State Management**: ${selectedTechStack.stack.stateManagement}
+- **Database**: ${JSON.stringify(selectedTechStack.stack.database)}
+- **Testing**: ${selectedTechStack.stack.testing}
+- **Deployment**: ${selectedTechStack.stack.deployment}
+
+## Key Dependencies
+${selectedTechStack.stack.dependencies ? selectedTechStack.stack.dependencies.map(dep => `- ${dep}`).join('\n') : '- To be determined based on specific requirements'}
+
+## Software Design Specification (Total ${specification.modules.length} modules, ${totalFunctions} functions)
+
+| Module | Function | Design Spec | Function Definition | Remarks |
+|--------|----------|-------------|-------------------|---------|
+${specification.modules.map(module => 
+  module.functions?.map(func => 
+    `| ${module.name} | ${func.name}() | ${func.description} | ${func.parameters} → ${func.returns} | ${func.remarks || '-'} |`
+  ).join('\n') || `| ${module.name} | - | ${module.description} | - | No functions |`
+).join('\n')}
+
+## Module Details
+
+${specification.modules.map(module => `### ${module.name}
+**Description**: ${module.description}
+
+**Functions**: ${module.functions?.length || 0}
+
+${module.functions?.map(func => `#### ${func.name}()
+- **Description**: ${func.description}
+- **Parameters**: ${func.parameters}
+- **Returns**: ${func.returns}
+`).join('\n') || 'No functions defined'}
+`).join('\n')}`;
+}
+
+// Create .sds directory with development files
+async function createSDSDirectory(specification, sdsDir) {
   await fs.mkdir(sdsDir, { recursive: true });
   
-  const devSpec = {
-    metadata: {
-      id: `sds_${Date.now()}`,
-      title: specification.title,
-      version: "1.0.0", 
-      created: new Date().toISOString(),
-      selectedTechStack: specification.techStack.name
-    },
+  // development.json
+  const developmentData = {
+    projectType: specification.techStack.name,
     techStack: specification.techStack.stack,
-    dependencies: specification.techStack.deps,
-    modules: specification.modules.map(module => ({
-      name: module.name,
+    modules: specification.modules.map(m => ({
+      name: m.name,
+      description: m.description,
+      functionCount: m.functions?.length || 0
+    }))
+  };
+  
+  await fs.writeFile(
+    path.join(sdsDir, 'development.json'),
+    JSON.stringify(developmentData, null, 2)
+  );
+  
+  // tasks.json (TaskMaster compatible)
+  const tasksData = {
+    tasks: specification.modules.map((module, index) => ({
+      id: (index + 1).toString(),
+      title: `Implement ${module.name}`,
       description: module.description,
+      status: 'pending',
+      priority: 'medium',
       functions: module.functions || []
     }))
   };
   
-  await fs.writeFile(path.join(sdsDir, 'development.json'), JSON.stringify(devSpec, null, 2));
-  await fs.writeFile(path.join(sdsDir, 'tasks.json'), JSON.stringify({
-    project: specification.title,
-    techStack: specification.techStack.name,
-    tasks: specification.modules.map((module, idx) => ({
-      id: idx + 1,
-      title: `Implement ${module.name} module`,
-      description: module.description,
-      status: "pending"
-    }))
-  }, null, 2));
+  await fs.writeFile(
+    path.join(sdsDir, 'tasks.json'),
+    JSON.stringify(tasksData, null, 2)
+  );
   
-  return sdsDir;
+  // README.md
+  const readmeContent = `# ${specification.title} Development Guide
+
+## Tech Stack
+${specification.techStack.name}
+
+## Quick Start
+1. Install dependencies
+2. Configure environment variables
+3. Run development server
+
+## Modules Overview
+${specification.modules.map(m => `- **${m.name}**: ${m.description}`).join('\n')}
+
+## Development Tasks
+See tasks.json for detailed implementation tasks.
+`;
+  
+  await fs.writeFile(
+    path.join(sdsDir, 'README.md'),
+    readmeContent
+  );
 }
 
-// 실행
+// Main execution
 if (process.argv[2]) {
-  const description = process.argv[2];
+  await loadEnv();
   
   (async () => {
     try {
+      const description = process.argv[2];
+      
+      // Auto-detect project type
       const projectType = detectProjectType(description);
-      console.log(`\n🎯 감지된 프로젝트 유형: ${projectType}`);
+      console.log(`\n🎯 Detected project type: ${projectType}`);
       
+      // Select tech stack
       const selectedTechStack = await selectTechStack(projectType);
-      console.log(`\n✅ 선택된 기술 스택: ${selectedTechStack.name}`);
-      console.log('명세서 생성을 시작합니다...\n');
+      console.log(`\n✅ Selected tech stack: ${selectedTechStack.name}`);
+      console.log('Starting specification generation...\n');
       
-      const { specification, markdown } = await generateSpecification(description, selectedTechStack);
+      // Generate specification
+      const specification = await generateSpecification(description, selectedTechStack);
       
-      console.error('\n🏆 성공!');
-      console.error(`✅ ${specification.modules.length}개 모듈`);
-      const totalFunctions = specification.modules.reduce((sum, mod) => sum + (mod.functions?.length || 0), 0);
-      console.error(`✅ ${totalFunctions}개 함수`);
+      const totalFunctions = specification.modules.reduce((sum, module) => sum + (module.functions?.length || 0), 0);
+      console.error('\n🏆 Success!');
+      console.error(`✅ ${specification.modules.length} modules`);
+      console.error(`✅ ${totalFunctions} functions`);
       
-      const sdsDir = await generateDevelopmentFiles(specification);
-      console.error(`✅ 개발 파일 생성 완료: ${sdsDir}`);
+      // Create .sds directory
+      const sdsDir = '.sds';
+      await createSDSDirectory(specification, sdsDir);
+      console.error(`✅ Development files created: ${sdsDir}`);
       
+      // Generate and save markdown
+      const markdown = generateMarkdown(specification);
       await fs.writeFile('specification.md', markdown);
-      console.error('✅ 명세서 저장: specification.md');
+      console.error('✅ Specification saved: specification.md');
       
-      console.log(markdown);
+      console.log('\n' + markdown);
       
     } catch (error) {
-      console.error('❌ 실패:', error.message);
+      console.error('❌ Failed:', error.message);
     } finally {
       rl.close();
     }
   })();
 } else {
-  console.log('사용법: node sds_interactive.js "프로젝트 설명"');
+  console.log('Usage: node sds.js "project description"');
   rl.close();
 }

@@ -8,6 +8,8 @@ A tool that converts natural language project descriptions into comprehensive so
 - **Auto Project Type Detection**: Automatically detects Mobile, Web, Backend projects
 - **Smart API Selection**: Intelligently selects best AI API based on task type and performance
 - **Tech Stack Selection**: Multiple technology stack options for each platform
+- **Language-Specific Code Generation**: Generates correct syntax for Swift, Dart, Java, Python, JavaScript
+- **Dynamic File Extensions**: Creates .swift, .dart, .java, .py files based on selected tech stack
 - **Complete Specification**: Generates detailed specifications with functions and test cases
 - **Development Files**: Auto-generates structured files in .sds directory
 - **MCP Server**: Compatible with Claude Code and other MCP clients
@@ -73,6 +75,7 @@ Process:
 - `api.json`: OpenAPI specification
 - `database.json`: Database schema
 - `README.md`: Development guide
+- **Language-specific module files**: `.swift`, `.dart`, `.java`, `.py`, `.js` based on selected tech stack
 
 ## Supported Project Types
 

@@ -181,26 +181,73 @@ const CONFIG = {
   preferredAPI: process.env.PREFERRED_API || 'claude'
 };
 
-// Check available APIs and select best one
-function getAvailableAPI() {
+// Enhanced API selection with performance and cost considerations
+function getAvailableAPI(taskType = 'general') {
   const apis = [
-    { name: 'claude', display: 'Claude', func: callClaude, key: process.env.ANTHROPIC_API_KEY, priority: 1 },
-    { name: 'openai', display: 'OpenAI', func: callOpenAI, key: process.env.OPENAI_API_KEY, priority: 2 },
-    { name: 'perplexity', display: 'Perplexity', func: callPerplexity, key: process.env.PERPLEXITY_API_KEY, priority: 3 }
+    { 
+      name: 'claude', 
+      display: 'Claude', 
+      func: callClaude, 
+      key: process.env.ANTHROPIC_API_KEY, 
+      priority: 1,
+      performance: 9, // High quality for complex tasks
+      cost: 6, // Medium cost
+      reliability: 9,
+      specialties: ['code', 'analysis', 'structured-output']
+    },
+    { 
+      name: 'openai', 
+      display: 'OpenAI', 
+      func: callOpenAI, 
+      key: process.env.OPENAI_API_KEY, 
+      priority: 2,
+      performance: 8, // Good performance
+      cost: 7, // Medium-high cost
+      reliability: 8,
+      specialties: ['general', 'creative', 'code']
+    },
+    { 
+      name: 'perplexity', 
+      display: 'Perplexity', 
+      func: callPerplexity, 
+      key: process.env.PERPLEXITY_API_KEY, 
+      priority: 3,
+      performance: 7, // Good for research
+      cost: 4, // Lower cost
+      reliability: 7,
+      specialties: ['research', 'factual', 'current-events']
+    }
   ].filter(api => api.key);
   
   if (apis.length === 0) {
     throw new Error('No API keys configured. Check your .env file.');
   }
   
-  // Try to use preferred API first
+  // Try to use preferred API first if available
   const preferred = apis.find(api => api.name === CONFIG.preferredAPI.toLowerCase());
   if (preferred) {
     return preferred;
   }
   
-  // Fall back to priority order
-  return apis.sort((a, b) => a.priority - b.priority)[0];
+  // Smart selection based on task type and API characteristics
+  const taskScoring = {
+    'module-generation': { performance: 0.4, cost: 0.3, reliability: 0.3 },
+    'specification': { performance: 0.5, cost: 0.2, reliability: 0.3 },
+    'general': { performance: 0.4, cost: 0.4, reliability: 0.2 }
+  };
+  
+  const weights = taskScoring[taskType] || taskScoring.general;
+  
+  // Calculate composite score for each API
+  const scoredApis = apis.map(api => ({
+    ...api,
+    score: (api.performance * weights.performance) + 
+           ((10 - api.cost) * weights.cost) + // Invert cost (lower cost = higher score)
+           (api.reliability * weights.reliability)
+  }));
+  
+  // Sort by score (descending) and return best match
+  return scoredApis.sort((a, b) => b.score - a.score)[0];
 }
 
 // Tech stack options by project type
@@ -392,8 +439,8 @@ async function selectTechStack(projectType) {
 }
 
 // Enhanced AI API call with retry logic
-async function callAI(prompt, retries = 1) {
-  const api = getAvailableAPI();
+async function callAI(prompt, retries = 1, taskType = 'general') {
+  const api = getAvailableAPI(taskType);
   console.error(`🤖 Using ${api.display} API...`);
   
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -410,41 +457,79 @@ async function callAI(prompt, retries = 1) {
   }
 }
 
-// Enhanced JSON parsing from AI response
+// Enhanced JSON parsing with multiple fallback strategies
 function parseJSONFromResponse(response, type = 'object') {
-  try {
-    // 1. Remove code blocks
-    let cleanResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+  const strategies = [
+    // Strategy 1: Direct JSON parse (for clean responses)
+    () => JSON.parse(response.trim()),
     
-    // 2. Remove comments
-    cleanResponse = cleanResponse.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    // Strategy 2: Remove code blocks and parse
+    () => {
+      let cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      return JSON.parse(cleaned.trim());
+    },
     
-    // 3. Extract JSON pattern
-    let jsonMatch;
-    if (type === 'array') {
-      jsonMatch = cleanResponse.match(/\[[\s\S]*\]/);
-    } else {
-      jsonMatch = cleanResponse.match(/\{[\s\S]*\}/);
+    // Strategy 3: Extract JSON pattern with regex
+    () => {
+      let cleanResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      cleanResponse = cleanResponse.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      
+      const pattern = type === 'array' ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
+      const jsonMatch = cleanResponse.match(pattern);
+      
+      if (!jsonMatch) throw new Error('No JSON pattern found');
+      
+      let jsonString = jsonMatch[0];
+      jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
+      jsonString = jsonString.replace(/[\x00-\x1F\x7F]/g, '');
+      
+      return JSON.parse(jsonString);
+    },
+    
+    // Strategy 4: Line-by-line extraction
+    () => {
+      const lines = response.split('\n');
+      const jsonLines = [];
+      let inJson = false;
+      let braceCount = 0;
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          inJson = true;
+        }
+        
+        if (inJson) {
+          jsonLines.push(line);
+          braceCount += (line.match(/[{[]/g) || []).length;
+          braceCount -= (line.match(/[}\]]/g) || []).length;
+          
+          if (braceCount === 0 && jsonLines.length > 0) {
+            break;
+          }
+        }
+      }
+      
+      if (jsonLines.length === 0) throw new Error('No JSON content found');
+      return JSON.parse(jsonLines.join('\n'));
     }
-    
-    if (!jsonMatch) {
-      throw new Error('No JSON pattern found');
+  ];
+  
+  let lastError;
+  for (let i = 0; i < strategies.length; i++) {
+    try {
+      const result = strategies[i]();
+      if (result && (type === 'array' ? Array.isArray(result) : typeof result === 'object')) {
+        return result;
+      }
+    } catch (error) {
+      lastError = error;
+      console.error(`JSON parsing strategy ${i + 1} failed:`, error.message);
     }
-    
-    let jsonString = jsonMatch[0];
-    
-    // 4. Remove trailing commas
-    jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
-    
-    // 5. Remove control characters
-    jsonString = jsonString.replace(/[\x00-\x1F\x7F]/g, '');
-    
-    // 6. Parse
-    return JSON.parse(jsonString);
-  } catch (error) {
-    console.error('JSON parsing failed, original response:', response.substring(0, 200));
-    throw new Error(`JSON parsing error: ${error.message}`);
   }
+  
+  console.error('All JSON parsing strategies failed. Original response:', response.substring(0, 300));
+  throw new Error(`JSON parsing failed after ${strategies.length} attempts: ${lastError?.message}`);
 }
 
 // Step 1: Generate module list
@@ -456,11 +541,11 @@ async function generateModuleList(description, complexity_level = 'medium') {
 Please provide a list of all modules needed for this project as a JSON array:
 ["Module1", "Module2", "Module3", ...]
 
-Include ${getModuleCount(complexity_level || 'medium')} modules appropriate for ${complexity_level || 'medium'} complexity.`;
+Include ${getModuleCount(complexity_level || 'medium', description)} modules appropriate for ${complexity_level || 'medium'} complexity.`;
 
   let modules;
   try {
-    const structureResponse = await callAI(structurePrompt);
+    const structureResponse = await callAI(structurePrompt, 1, 'module-generation');
     modules = parseJSONFromResponse(structureResponse, 'array');
     
     if (!Array.isArray(modules) || modules.length === 0) {
@@ -542,7 +627,7 @@ Respond in JSON format:
 Include 3-5 functions per module.`;
 
         try {
-          const moduleResponse = await callAI(modulePrompt);
+          const moduleResponse = await callAI(modulePrompt, 1, 'specification');
           const moduleData = parseJSONFromResponse(moduleResponse);
           
           if (!moduleData || typeof moduleData !== 'object') {
@@ -755,14 +840,58 @@ function detectLanguage(text) {
   return koreanRegex.test(text) ? 'ko' : 'en';
 }
 
-// Get module count based on complexity
-function getModuleCount(complexity_level) {
+// Get module count based on complexity with intelligent auto-detection
+function getModuleCount(complexity_level, projectDescription = '') {
+  if (complexity_level === 'auto') {
+    return inferModuleCountFromDescription(projectDescription);
+  }
+  
   const moduleCounts = {
     simple: 5,
     medium: 8,
     complex: 12
   };
   return moduleCounts[complexity_level] || 8;
+}
+
+// Intelligent module count inference from project description
+function inferModuleCountFromDescription(description) {
+  const text = description.toLowerCase();
+  let score = 5; // Base score
+  
+  // Complexity indicators
+  const complexityKeywords = {
+    high: ['authentication', 'security', 'payment', 'analytics', 'real-time', 'notification', 'api integration', 'machine learning', 'ai', 'blockchain'],
+    medium: ['user management', 'database', 'search', 'admin panel', 'dashboard', 'reporting', 'file upload', 'email'],
+    low: ['crud', 'basic', 'simple', 'minimal']
+  };
+  
+  // Count complexity indicators
+  complexityKeywords.high.forEach(keyword => {
+    if (text.includes(keyword)) score += 2;
+  });
+  
+  complexityKeywords.medium.forEach(keyword => {
+    if (text.includes(keyword)) score += 1;
+  });
+  
+  complexityKeywords.low.forEach(keyword => {
+    if (text.includes(keyword)) score -= 1;
+  });
+  
+  // Description length factor
+  const wordCount = description.split(/\s+/).length;
+  if (wordCount > 100) score += 2;
+  else if (wordCount > 50) score += 1;
+  else if (wordCount < 20) score -= 1;
+  
+  // Platform complexity
+  if (text.includes('mobile') || text.includes('ios') || text.includes('android')) score += 1;
+  if (text.includes('web') && text.includes('backend')) score += 2;
+  if (text.includes('microservices') || text.includes('distributed')) score += 3;
+  
+  // Ensure reasonable bounds
+  return Math.max(4, Math.min(15, Math.round(score)));
 }
 
 // Localized messages
@@ -808,7 +937,7 @@ async function startMCPServer() {
   
   const server = {
     name: "sds-generator",
-    version: "1.0.10",
+    version: "1.0.15",
     tools: [
       {
         name: "analyze_project_request",
@@ -1013,7 +1142,7 @@ async function handleAnalyzeProjectRequest(request) {
   
   // Generate modules
   const moduleList = await generateModuleList(project_description, complexity_level);
-  const moduleCount = getModuleCount(complexity_level);
+  const moduleCount = getModuleCount(complexity_level, project_description);
   const specification = await generateSpecification(project_description, selectedTechStack, moduleList.slice(0, moduleCount));
   
   // Generate session ID
@@ -1077,7 +1206,7 @@ IMPORTANT: Respond with ONLY valid JSON format. No explanations or additional te
 Modified specification JSON:`;
 
   try {
-    const modificationResponse = await callAI(modificationPrompt);
+    const modificationResponse = await callAI(modificationPrompt, 1, 'specification');
     const updatedSpec = parseJSONFromResponse(modificationResponse);
     
     // Validate updated specification

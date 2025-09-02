@@ -448,7 +448,7 @@ function parseJSONFromResponse(response, type = 'object') {
 }
 
 // Step 1: Generate module list
-async function generateModuleList(description) {
+async function generateModuleList(description, complexity_level = 'medium') {
   console.error('🤖 Step 1: AI basic structure analysis...');
   
   const structurePrompt = `Project: "${description}"
@@ -456,10 +456,19 @@ async function generateModuleList(description) {
 Please provide a list of all modules needed for this project as a JSON array:
 ["Module1", "Module2", "Module3", ...]
 
-Include at least 10-15 modules.`;
+Include ${getModuleCount(complexity_level || 'medium')} modules appropriate for ${complexity_level || 'medium'} complexity.`;
 
-  const structureResponse = await callAI(structurePrompt);
-  const modules = parseJSONFromResponse(structureResponse, 'array');
+  let modules;
+  try {
+    const structureResponse = await callAI(structurePrompt);
+    modules = parseJSONFromResponse(structureResponse, 'array');
+    
+    if (!Array.isArray(modules) || modules.length === 0) {
+      throw new Error('Invalid module structure received from AI');
+    }
+  } catch (apiError) {
+    throw new Error(`Module structure generation failed: ${apiError.message}. Please check your API configuration and try again.`);
+  }
   
   console.error(`✅ ${modules.length} modules identified`);
   return modules;
@@ -532,14 +541,25 @@ Respond in JSON format:
 
 Include 3-5 functions per module.`;
 
-        const moduleResponse = await callAI(modulePrompt);
-        const moduleData = parseJSONFromResponse(moduleResponse);
-        console.error(`    ✓ ${moduleName}: ${moduleData.functions?.length || 0} functions generated`);
-        return moduleData;
-      } catch (error) {
-        console.error(`    ❌ ${moduleName} module failed: ${error.message}`);
-        return null;
-      }
+        try {
+          const moduleResponse = await callAI(modulePrompt);
+          const moduleData = parseJSONFromResponse(moduleResponse);
+          
+          if (!moduleData || typeof moduleData !== 'object') {
+            throw new Error(`Invalid module data received for ${moduleName}`);
+          }
+          
+          console.error(`    ✓ ${moduleName}: ${moduleData.functions?.length || 0} functions generated`);
+          return moduleData;
+        } catch (apiError) {
+          console.error(`    ❌ Failed to generate ${moduleName}: ${apiError.message}`);
+          // Return minimal module structure on failure
+          return {
+            name: moduleName,
+            description: `${moduleName} module functionality`,
+            functions: []
+          };
+        }
     });
     
     const batchResults = await Promise.all(batchPromises);
@@ -693,7 +713,7 @@ async function main() {
     console.log(`\n✅ Selected tech stack: ${selectedTechStack.name}`);
     
     // Generate module list
-    const moduleList = await generateModuleList(description);
+    const moduleList = await generateModuleList(description, 'complex');
     
     // Let user select modules
     const selectedModules = await selectModules(moduleList);
@@ -735,6 +755,16 @@ function detectLanguage(text) {
   return koreanRegex.test(text) ? 'ko' : 'en';
 }
 
+// Get module count based on complexity
+function getModuleCount(complexity_level) {
+  const moduleCounts = {
+    simple: 5,
+    medium: 8,
+    complex: 12
+  };
+  return moduleCounts[complexity_level] || 8;
+}
+
 // Localized messages
 const messages = {
   en: {
@@ -772,7 +802,10 @@ const messages = {
 };
 
 // MCP Server functionality
-function startMCPServer() {
+async function startMCPServer() {
+  // Load environment variables once at server start
+  await loadEnv();
+  
   const server = {
     name: "sds-generator",
     version: "1.0.10",
@@ -863,6 +896,45 @@ function startMCPServer() {
             }
           }
         }
+      },
+      {
+        name: "select_tech_stack",
+        description: "Select technology stack for a project platform",
+        inputSchema: {
+          type: "object",
+          properties: {
+            platform: {
+              type: "string",
+              enum: ["embedded", "web", "mobile", "desktop", "api"],
+              description: "Target platform"
+            },
+            preferences: {
+              type: "array",
+              items: { type: "string" },
+              description: "Technology preferences (optional)"
+            }
+          },
+          required: ["platform"]
+        }
+      },
+      {
+        name: "select_modules",
+        description: "Select modules from a generated list for detailed specification",
+        inputSchema: {
+          type: "object",
+          properties: {
+            session_id: {
+              type: "string",
+              description: "Specification session ID"
+            },
+            selected_modules: {
+              type: "array",
+              items: { type: "string" },
+              description: "List of selected module names"
+            }
+          },
+          required: ["session_id", "selected_modules"]
+        }
       }
     ]
   };
@@ -896,6 +968,10 @@ function startMCPServer() {
           await handleRefineSpecification(request);
         } else if (request.params.name === 'export_specification') {
           await handleExportSpecification(request);
+        } else if (request.params.name === 'select_tech_stack') {
+          await handleSelectTechStack(request);
+        } else if (request.params.name === 'select_modules') {
+          await handleSelectModules(request);
         }
       }
     } catch (error) {
@@ -914,8 +990,6 @@ function startMCPServer() {
 // MCP Handler functions
 async function handleAnalyzeProjectRequest(request) {
   const { project_description, target_platform = 'auto', complexity_level = 'auto', include_advanced_features = true } = request.params.arguments;
-  
-  await loadEnv();
   
   // Detect user language
   const userLanguage = detectLanguage(project_description);
@@ -938,8 +1012,9 @@ async function handleAnalyzeProjectRequest(request) {
   const selectedTechStack = availableStacks ? availableStacks[0] : techStackOptions.web[0];
   
   // Generate modules
-  const moduleList = await generateModuleList(project_description);
-  const specification = await generateSpecification(project_description, selectedTechStack, moduleList.slice(0, 10));
+  const moduleList = await generateModuleList(project_description, complexity_level);
+  const moduleCount = getModuleCount(complexity_level);
+  const specification = await generateSpecification(project_description, selectedTechStack, moduleList.slice(0, moduleCount));
   
   // Generate session ID
   const sessionId = `spec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -990,8 +1065,6 @@ async function handleRefineSpecification(request) {
   const sessionData = sessions.get(session_id);
   const currentSpec = sessionData.specification;
   
-  await loadEnv();
-  
   // Generate modification based on request
   const modificationPrompt = `Please modify the current specification according to this request:
 
@@ -1006,6 +1079,11 @@ Modified specification JSON:`;
   try {
     const modificationResponse = await callAI(modificationPrompt);
     const updatedSpec = parseJSONFromResponse(modificationResponse);
+    
+    // Validate updated specification
+    if (!updatedSpec || !updatedSpec.modules || !Array.isArray(updatedSpec.modules)) {
+      throw new Error('Invalid specification format received from AI modification');
+    }
     
     // Update session
     sessionData.specification = updatedSpec;
@@ -1112,6 +1190,98 @@ ${msg.templates}: ${include_templates ? msg.yes : msg.no}
 ${msg.source}: Session ID: ${session_id}
 
 ${exportContent}`
+        }
+      ]
+    }
+  }) + '\n');
+}
+
+async function handleSelectTechStack(request) {
+  const { platform, preferences = [] } = request.params.arguments;
+  
+  const availableStacks = techStackOptions[platform];
+  if (!availableStacks) {
+    throw new Error(`Unsupported platform: ${platform}`);
+  }
+  
+  // Filter by preferences if provided
+  let filteredStacks = availableStacks;
+  if (preferences.length > 0) {
+    filteredStacks = availableStacks.filter(stack => 
+      preferences.some(pref => 
+        stack.name.toLowerCase().includes(pref.toLowerCase()) ||
+        stack.stack.language.toLowerCase().includes(pref.toLowerCase())
+      )
+    );
+  }
+  
+  const stacks = filteredStacks.length > 0 ? filteredStacks : availableStacks;
+  
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: {
+      content: [
+        {
+          type: "text",
+          text: `## Available Tech Stacks for ${platform}
+
+${stacks.map((stack, index) => `### ${index + 1}. ${stack.name}
+- **Language**: ${stack.stack.language}
+- **Frontend**: ${stack.stack.frontend}
+- **Backend**: ${stack.stack.backend}
+- **Database**: ${stack.stack.database}
+- **Tools**: ${stack.stack.tools}
+`).join('\n')}`
+        }
+      ]
+    }
+  }) + '\n');
+}
+
+async function handleSelectModules(request) {
+  const { session_id, selected_modules } = request.params.arguments;
+  
+  if (!session_id || !sessions.has(session_id)) {
+    throw new Error('Specification session not found. Please provide a valid session_id.');
+  }
+  
+  if (!Array.isArray(selected_modules) || selected_modules.length === 0) {
+    throw new Error('Please provide a valid array of selected module names.');
+  }
+  
+  const sessionData = sessions.get(session_id);
+  
+  // Filter specification to only include selected modules
+  const filteredSpec = {
+    ...sessionData.specification,
+    modules: sessionData.specification.modules.filter(module => 
+      selected_modules.includes(module.name)
+    )
+  };
+  
+  // Update session with filtered specification
+  sessionData.specification = filteredSpec;
+  sessionData.last_modified = new Date().toISOString();
+  sessions.set(session_id, sessionData);
+  
+  const markdownWithLang = generateMarkdownWithLanguage(filteredSpec, sessionData.platform);
+  
+  process.stdout.write(JSON.stringify({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: {
+      content: [
+        {
+          type: "text",
+          text: `## Module Selection Complete
+
+**Selected Modules**: ${selected_modules.join(', ')}
+**Session ID**: \`${session_id}\`
+
+## Updated Specification
+
+${markdownWithLang}`
         }
       ]
     }
@@ -1245,7 +1415,10 @@ function getDefaultLanguage(platform) {
 
 // Check for MCP mode
 if (process.argv.includes('--mcp')) {
-  startMCPServer();
+  startMCPServer().catch(error => {
+    console.error('❌ MCP Server error:', error.message);
+    process.exit(1);
+  });
 } else {
   // Run main function
   main().catch(error => {

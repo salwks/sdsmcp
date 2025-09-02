@@ -632,7 +632,6 @@ async function main() {
     
   } catch (error) {
     handleError(error, false);
-    process.exit(1);
   }
 }
 
@@ -640,12 +639,10 @@ async function main() {
 if (process.argv.includes('--mcp')) {
   startMCPServer().catch(error => {
     handleError(error, false);
-    process.exit(1);
   });
 } else {
   // Run main function
   main().catch(error => {
     handleError(error, false);
-    process.exit(1);
   });
 }

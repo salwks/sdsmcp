@@ -1010,3 +1010,8 @@ ${module.functions && module.functions.length > 0 ?
 
 // Export the startMCPServer function
 export { startMCPServer };
+
+// Start the MCP server if this file is run directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startMCPServer();
+}

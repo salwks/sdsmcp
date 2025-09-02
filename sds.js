@@ -37,6 +37,35 @@ class ValidationError extends Error {
   }
 }
 
+class FileIOError extends Error {
+  constructor(message, filePath, operation) {
+    super(message);
+    this.name = 'FileIOError';
+    this.filePath = filePath;
+    this.operation = operation;
+  }
+}
+
+class NetworkError extends Error {
+  constructor(message, endpoint, statusCode) {
+    super(message);
+    this.name = 'NetworkError';
+    this.endpoint = endpoint;
+    this.statusCode = statusCode;
+  }
+}
+
+// Simple logging system
+const logger = {
+  levels: { error: 0, warn: 1, info: 2, debug: 3 },
+  currentLevel: process.env.LOG_LEVEL ? logger.levels[process.env.LOG_LEVEL] || 2 : 2,
+  
+  error: (message, ...args) => logger.currentLevel >= 0 && console.error(`❌ [ERROR] ${message}`, ...args),
+  warn: (message, ...args) => logger.currentLevel >= 1 && console.warn(`⚠️ [WARN] ${message}`, ...args),
+  info: (message, ...args) => logger.currentLevel >= 2 && console.log(`ℹ️ [INFO] ${message}`, ...args),
+  debug: (message, ...args) => logger.currentLevel >= 3 && console.log(`🐛 [DEBUG] ${message}`, ...args)
+};
+
 // Centralized error handling
 function handleError(error, isMCP = false, requestId = null) {
   let userMessage = 'An unexpected error occurred.';
@@ -54,6 +83,12 @@ function handleError(error, isMCP = false, requestId = null) {
   } else if (error instanceof ValidationError) {
     userMessage = `Validation error in ${error.field}: ${error.message}`;
     code = -32602; // Invalid params
+  } else if (error instanceof FileIOError) {
+    userMessage = `File operation failed (${error.operation}): ${error.message}`;
+    code = -32603; // Internal error
+  } else if (error instanceof NetworkError) {
+    userMessage = `Network error accessing ${error.endpoint}: ${error.message}`;
+    code = -32603; // Internal error
   }
   
   if (isMCP) {
@@ -1020,7 +1055,7 @@ async function startMCPServer() {
   
   const server = {
     name: "sds-generator",
-    version: "1.0.16",
+    version: "1.0.17",
     tools: [
       {
         name: "analyze_project_request",

@@ -341,6 +341,9 @@ async function generateSpecification(description, techStack, moduleList) {
           "purpose": "함수 목적",
           "parameters": ["매개변수 목록"],
           "returnValue": "반환값 설명",
+          "designSpec": "설계 명세",
+          "functionDefinition": "함수 정의",
+          "remarks": "비고",
           "testCases": ["테스트 케이스 목록"]
         }
       ]
@@ -375,6 +378,9 @@ Please respond in the following JSON structure:
           "purpose": "Function purpose",
           "parameters": ["Parameter list"],
           "returnValue": "Return value description",
+          "designSpec": "Design specification",
+          "functionDefinition": "Function definition",
+          "remarks": "Remarks",
           "testCases": ["Test case list"]
         }
       ]
@@ -981,15 +987,21 @@ ${selectedTechStack ? `
 ${specification.modules.map((module, index) => `### ${index + 1}. ${module.name}
 ${module.description}
 
-#### ${t.moduleDetails}
+#### ${lang === 'ko' ? '함수 목록' : 'Function List'}
+
+${lang === 'ko' ? '| Function | Design Spec | Function Definition | Remarks |' : '| Function | Design Spec | Function Definition | Remarks |'}
+${lang === 'ko' ? '|----------|-------------|---------------------|---------|' : '|----------|-------------|---------------------|---------|'}
+${module.functions && module.functions.length > 0 ? 
+  module.functions.map((func, funcIndex) => `| ${func.name}() | ${func.designSpec || '설계 명세'} | ${func.functionDefinition || '함수 정의'} | ${func.remarks || '비고'} |`).join('\n') : 
+  `${lang === 'ko' ? '함수가 정의되지 않았습니다.' : 'No functions defined.'}`}
+
 ${module.functions && module.functions.length > 0 ? 
   module.functions.map((func, funcIndex) => `##### ${funcIndex + 1}. ${func.name}()
 - **${lang === 'ko' ? '목적' : 'Purpose'}**: ${func.purpose}
 - **${lang === 'ko' ? '매개변수' : 'Parameters'}**: ${Array.isArray(func.parameters) ? func.parameters.join(', ') : func.parameters || 'None'}
 - **${t.returnValue}**: ${func.returnValue}
 - **${t.testCases}**: ${Array.isArray(func.testCases) ? func.testCases.map(test => `  - ${test}`).join('\n') : func.testCases || 'None'}
-`).join('\n') : 
-  `${lang === 'ko' ? '함수가 정의되지 않았습니다.' : 'No functions defined.'}`}
+`).join('\n') : ''}
 `).join('\n')}
 `;
 

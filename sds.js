@@ -257,14 +257,25 @@ const techStackOptions = {
 function detectProjectType(description) {
   const desc = description.toLowerCase();
   
-  if (desc.includes('mobile') || desc.includes('app') || desc.includes('android') || desc.includes('ios')) {
-    return 'mobile';
-  } else if (desc.includes('website') || desc.includes('browser') || desc.includes('web')) {
+  // Check web first (more specific patterns)
+  if (desc.includes('web-based') || desc.includes('web application') || desc.includes('website') || desc.includes('browser') || desc.includes('web app')) {
     return 'web';
-  } else if (desc.includes('api') || desc.includes('server') || desc.includes('backend')) {
+  }
+  // Then check mobile (avoid false positives from "application")
+  else if (desc.includes('mobile') || desc.includes('mobile app') || desc.includes('android') || desc.includes('ios') || desc.includes('smartphone')) {
+    return 'mobile';
+  } 
+  // Backend patterns
+  else if (desc.includes('api') || desc.includes('server') || desc.includes('backend') || desc.includes('microservice')) {
     return 'backend';
-  } else if (desc.includes('desktop') || desc.includes('windows') || desc.includes('mac')) {
+  }
+  // Desktop patterns
+  else if (desc.includes('desktop') || desc.includes('desktop application') || desc.includes('windows') || desc.includes('mac')) {
     return 'desktop';
+  }
+  // Fallback: check for generic "app" last
+  else if (desc.includes('app') && !desc.includes('web') && !desc.includes('application')) {
+    return 'mobile';
   }
   
   return 'web'; // default
@@ -370,11 +381,17 @@ Include at least 10-15 modules.`;
 
   console.error('🔧 Step 2: Detailing each module...');
   
-  for (const moduleName of modules) {
-    console.error(`  - Detailing ${moduleName} module...`);
+  // Process modules in parallel batches of 3 to avoid rate limits
+  const batchSize = 3;
+  for (let i = 0; i < modules.length; i += batchSize) {
+    const batch = modules.slice(i, i + batchSize);
+    console.error(`  📦 Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(modules.length/batchSize)} (${batch.length} modules)...`);
     
-    try {
-      const modulePrompt = `Please design the "${moduleName}" module in detail.
+    const batchPromises = batch.map(async (moduleName) => {
+      console.error(`  - Detailing ${moduleName} module...`);
+      
+      try {
+        const modulePrompt = `Please design the "${moduleName}" module in detail.
 
 Respond in JSON format:
 {
@@ -392,12 +409,29 @@ Respond in JSON format:
 
 Include 3-5 functions per module.`;
 
-      const moduleResponse = await callAI(modulePrompt);
-      const moduleData = parseJSONFromResponse(moduleResponse);
-      specification.modules.push(moduleData);
-      console.error(`    ✓ ${moduleData.functions?.length || 0} functions generated`);
-    } catch (error) {
-      console.error(`    ❌ ${moduleName} module failed: ${error.message}`);
+        const moduleResponse = await callAI(modulePrompt);
+        const moduleData = parseJSONFromResponse(moduleResponse);
+        console.error(`    ✓ ${moduleName}: ${moduleData.functions?.length || 0} functions generated`);
+        return moduleData;
+      } catch (error) {
+        console.error(`    ❌ ${moduleName} module failed: ${error.message}`);
+        return null;
+      }
+    });
+    
+    const batchResults = await Promise.all(batchPromises);
+    
+    // Add successful results to specification
+    batchResults.forEach(result => {
+      if (result) {
+        specification.modules.push(result);
+      }
+    });
+    
+    // Small delay between batches to respect rate limits
+    if (i + batchSize < modules.length) {
+      console.error(`  ⏱️ Brief pause before next batch...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 

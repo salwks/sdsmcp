@@ -362,7 +362,7 @@ Include at least 10-15 modules.`;
   console.error(`✅ ${modules.length} modules identified`);
   
   const specification = {
-    title: "Blood Sugar Monitoring Mobile App",
+    title: "Project Specification",
     description,
     techStack: selectedTechStack,
     modules: []
@@ -513,47 +513,57 @@ See tasks.json for detailed implementation tasks.
   );
 }
 
-// Main execution
-if (process.argv[2]) {
+// Main execution function
+async function main() {
+  if (!process.argv[2]) {
+    console.log('Usage: sds "project description"');
+    console.log('\nExample:');
+    console.log('  sds "I want to create a mobile e-commerce app"');
+    return;
+  }
+
   await loadEnv();
   
-  (async () => {
-    try {
-      const description = process.argv[2];
-      
-      // Auto-detect project type
-      const projectType = detectProjectType(description);
-      console.log(`\n🎯 Detected project type: ${projectType}`);
-      
-      // Select tech stack
-      const selectedTechStack = await selectTechStack(projectType);
-      console.log(`\n✅ Selected tech stack: ${selectedTechStack.name}`);
-      console.log('Starting specification generation...\n');
-      
-      // Generate specification
-      const specification = await generateSpecification(description, selectedTechStack);
-      
-      const totalFunctions = specification.modules.reduce((sum, module) => sum + (module.functions?.length || 0), 0);
-      console.error('\n🏆 Success!');
-      console.error(`✅ ${specification.modules.length} modules`);
-      console.error(`✅ ${totalFunctions} functions`);
-      
-      // Create .sds directory
-      const sdsDir = '.sds';
-      await createSDSDirectory(specification, sdsDir);
-      console.error(`✅ Development files created: ${sdsDir}`);
-      
-      // Generate and save markdown
-      const markdown = generateMarkdown(specification);
-      await fs.writeFile('specification.md', markdown);
-      console.error('✅ Specification saved: specification.md');
-      
-      console.log('\n' + markdown);
-      
-    } catch (error) {
-      console.error('❌ Failed:', error.message);
-    }
-  })();
-} else {
-  console.log('Usage: node sds.js "project description"');
+  try {
+    const description = process.argv[2];
+    
+    // Auto-detect project type
+    const projectType = detectProjectType(description);
+    console.log(`\n🎯 Detected project type: ${projectType}`);
+    
+    // Select tech stack
+    const selectedTechStack = await selectTechStack(projectType);
+    console.log(`\n✅ Selected tech stack: ${selectedTechStack.name}`);
+    console.log('Starting specification generation...\n');
+    
+    // Generate specification
+    const specification = await generateSpecification(description, selectedTechStack);
+    
+    const totalFunctions = specification.modules.reduce((sum, module) => sum + (module.functions?.length || 0), 0);
+    console.error('\n🏆 Success!');
+    console.error(`✅ ${specification.modules.length} modules`);
+    console.error(`✅ ${totalFunctions} functions`);
+    
+    // Create .sds directory
+    const sdsDir = '.sds';
+    await createSDSDirectory(specification, sdsDir);
+    console.error(`✅ Development files created: ${sdsDir}`);
+    
+    // Generate and save markdown
+    const markdown = generateMarkdown(specification);
+    await fs.writeFile('specification.md', markdown);
+    console.error('✅ Specification saved: specification.md');
+    
+    console.log('\n' + markdown);
+    
+  } catch (error) {
+    console.error('❌ Failed:', error.message);
+    process.exit(1);
+  }
 }
+
+// Run main function
+main().catch(error => {
+  console.error('❌ Unexpected error:', error.message);
+  process.exit(1);
+});

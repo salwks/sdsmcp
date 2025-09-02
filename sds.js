@@ -4,6 +4,86 @@ import fs from 'fs/promises';
 import path from 'path';
 import readline from 'readline';
 
+// Custom error classes for better error handling
+class APIError extends Error {
+  constructor(message, originalError, apiName) {
+    super(message);
+    this.name = 'APIError';
+    this.originalError = originalError;
+    this.apiName = apiName;
+  }
+}
+
+class ParsingError extends Error {
+  constructor(message, originalResponse) {
+    super(message);
+    this.name = 'ParsingError';
+    this.originalResponse = originalResponse;
+  }
+}
+
+class ConfigurationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConfigurationError';
+  }
+}
+
+class ValidationError extends Error {
+  constructor(message, field) {
+    super(message);
+    this.name = 'ValidationError';
+    this.field = field;
+  }
+}
+
+// Centralized error handling
+function handleError(error, isMCP = false, requestId = null) {
+  let userMessage = 'An unexpected error occurred.';
+  let code = -32603; // Internal error
+  
+  if (error instanceof APIError) {
+    userMessage = `Failed to connect to ${error.apiName} API. Please check your API keys in the .env file.`;
+    code = -32602; // Invalid params
+  } else if (error instanceof ParsingError) {
+    userMessage = `The AI response could not be parsed. This may be a temporary issue - please try again.`;
+    code = -32603; // Internal error
+  } else if (error instanceof ConfigurationError) {
+    userMessage = `Configuration error: ${error.message}`;
+    code = -32602; // Invalid params
+  } else if (error instanceof ValidationError) {
+    userMessage = `Validation error in ${error.field}: ${error.message}`;
+    code = -32602; // Invalid params
+  }
+  
+  if (isMCP) {
+    // Return structured error for MCP clients
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: requestId,
+      error: { 
+        code: code, 
+        message: userMessage,
+        data: process.env.NODE_ENV === 'development' ? { 
+          stack: error.stack,
+          originalError: error.originalError?.message 
+        } : undefined
+      }
+    }) + '\n');
+  } else {
+    // Display user-friendly message for CLI
+    console.error(`❌ Operation failed: ${userMessage}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('--- Technical Details ---');
+      console.error(error.stack);
+      if (error.originalError) {
+        console.error('--- Original Error ---');
+        console.error(error.originalError.stack);
+      }
+    }
+  }
+}
+
 // Load .env file
 async function loadEnv() {
   try {
@@ -220,7 +300,7 @@ function getAvailableAPI(taskType = 'general') {
   ].filter(api => api.key);
   
   if (apis.length === 0) {
-    throw new Error('No API keys configured. Check your .env file.');
+    throw new ConfigurationError('No API keys configured. Check your .env file.');
   }
   
   // Try to use preferred API first if available
@@ -449,7 +529,7 @@ async function callAI(prompt, retries = 1, taskType = 'general') {
     } catch (error) {
       if (attempt === retries) {
         console.error(`❌ ${api.display} API error after ${retries + 1} attempts:`, error.message);
-        throw new Error(`${api.display} API failed: ${error.message}`);
+        throw new APIError(`${api.display} API failed: ${error.message}`, error, api.name);
       }
       console.error(`⚠️ ${api.display} API attempt ${attempt + 1} failed, retrying...`);
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -529,7 +609,7 @@ function parseJSONFromResponse(response, type = 'object') {
   }
   
   console.error('All JSON parsing strategies failed. Original response:', response.substring(0, 300));
-  throw new Error(`JSON parsing failed after ${strategies.length} attempts: ${lastError?.message}`);
+  throw new ParsingError(`JSON parsing failed after ${strategies.length} attempts: ${lastError?.message}`, response);
 }
 
 // Step 1: Generate module list
@@ -549,10 +629,13 @@ Include ${getModuleCount(complexity_level || 'medium', description)} modules app
     modules = parseJSONFromResponse(structureResponse, 'array');
     
     if (!Array.isArray(modules) || modules.length === 0) {
-      throw new Error('Invalid module structure received from AI');
+      throw new ValidationError('Invalid module structure received from AI', 'modules');
     }
   } catch (apiError) {
-    throw new Error(`Module structure generation failed: ${apiError.message}. Please check your API configuration and try again.`);
+    if (apiError instanceof APIError) {
+      throw apiError; // Re-throw API errors as-is
+    }
+    throw new APIError(`Module structure generation failed: ${apiError.message}`, apiError, 'AI');
   }
   
   console.error(`✅ ${modules.length} modules identified`);
@@ -631,7 +714,7 @@ Include 3-5 functions per module.`;
           const moduleData = parseJSONFromResponse(moduleResponse);
           
           if (!moduleData || typeof moduleData !== 'object') {
-            throw new Error(`Invalid module data received for ${moduleName}`);
+            throw new ValidationError(`Invalid module data received for ${moduleName}`, 'moduleData');
           }
           
           console.error(`    ✓ ${moduleName}: ${moduleData.functions?.length || 0} functions generated`);
@@ -937,7 +1020,7 @@ async function startMCPServer() {
   
   const server = {
     name: "sds-generator",
-    version: "1.0.15",
+    version: "1.0.16",
     tools: [
       {
         name: "analyze_project_request",
@@ -1104,14 +1187,7 @@ async function startMCPServer() {
         }
       }
     } catch (error) {
-      process.stdout.write(JSON.stringify({
-        jsonrpc: "2.0",
-        id: request?.id || null,
-        error: {
-          code: -32603,
-          message: error.message
-        }
-      }) + '\n');
+      handleError(error, true, request?.id || null);
     }
   });
 }
@@ -1188,7 +1264,7 @@ async function handleRefineSpecification(request) {
   const { session_id, modification_request, action_type = 'auto' } = request.params.arguments;
   
   if (!session_id || !sessions.has(session_id)) {
-    throw new Error('Specification session not found. Please provide a valid session_id.');
+    throw new ValidationError('Specification session not found. Please provide a valid session_id.', 'session_id');
   }
   
   const sessionData = sessions.get(session_id);
@@ -1211,7 +1287,7 @@ Modified specification JSON:`;
     
     // Validate updated specification
     if (!updatedSpec || !updatedSpec.modules || !Array.isArray(updatedSpec.modules)) {
-      throw new Error('Invalid specification format received from AI modification');
+      throw new ValidationError('Invalid specification format received from AI modification', 'specification');
     }
     
     // Update session
@@ -1260,7 +1336,10 @@ ${markdownWithLang}`
       }
     }) + '\n');
   } catch (error) {
-    throw new Error(`Specification refinement failed: ${error.message}`);
+    if (error instanceof APIError || error instanceof ValidationError || error instanceof ParsingError) {
+      throw error; // Re-throw custom errors as-is
+    }
+    throw new APIError(`Specification refinement failed: ${error.message}`, error, 'AI');
   }
 }
 
@@ -1330,7 +1409,7 @@ async function handleSelectTechStack(request) {
   
   const availableStacks = techStackOptions[platform];
   if (!availableStacks) {
-    throw new Error(`Unsupported platform: ${platform}`);
+    throw new ValidationError(`Unsupported platform: ${platform}`, 'platform');
   }
   
   // Filter by preferences if provided
@@ -1372,11 +1451,11 @@ async function handleSelectModules(request) {
   const { session_id, selected_modules } = request.params.arguments;
   
   if (!session_id || !sessions.has(session_id)) {
-    throw new Error('Specification session not found. Please provide a valid session_id.');
+    throw new ValidationError('Specification session not found. Please provide a valid session_id.', 'session_id');
   }
   
   if (!Array.isArray(selected_modules) || selected_modules.length === 0) {
-    throw new Error('Please provide a valid array of selected module names.');
+    throw new ValidationError('Please provide a valid array of selected module names.', 'selected_modules');
   }
   
   const sessionData = sessions.get(session_id);
@@ -1545,13 +1624,13 @@ function getDefaultLanguage(platform) {
 // Check for MCP mode
 if (process.argv.includes('--mcp')) {
   startMCPServer().catch(error => {
-    console.error('❌ MCP Server error:', error.message);
+    handleError(error, false);
     process.exit(1);
   });
 } else {
   // Run main function
   main().catch(error => {
-    console.error('❌ Unexpected error:', error.message);
+    handleError(error, false);
     process.exit(1);
   });
 }

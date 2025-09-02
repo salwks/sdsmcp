@@ -23,15 +23,19 @@ async function loadEnv() {
   }
 }
 
-// Create readline interface
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
 // Question helper function
 function askQuestion(query) {
-  return new Promise(resolve => rl.question(query, resolve));
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
+  return new Promise(resolve => {
+    rl.question(query, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
 }
 
 // API call functions
@@ -548,11 +552,8 @@ if (process.argv[2]) {
       
     } catch (error) {
       console.error('❌ Failed:', error.message);
-    } finally {
-      rl.close();
     }
   })();
 } else {
   console.log('Usage: node sds.js "project description"');
-  rl.close();
 }

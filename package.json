@@ -16,8 +16,8 @@
     "specification",
     "ai",
     "project-generator",
-    "korean",
-    "documentation"
+    "documentation",
+    "mcp-server"
   ],
   "author": "salwks",
   "license": "MIT",

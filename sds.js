@@ -204,17 +204,27 @@ async function callClaude(prompt) {
     clearTimeout(timeoutId);
     
     if (!response.ok) {
-      throw new Error(`Claude API error: ${response.status}`);
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new NetworkError(`Claude API error: ${response.status} ${response.statusText}. ${errorText}`, 
+                           'https://api.anthropic.com/v1/messages', response.status);
     }
     
     const data = await response.json();
+    if (!data.content || !data.content[0] || !data.content[0].text) {
+      throw new ValidationError('Invalid response format from Claude API', 'response_content');
+    }
     return data.content[0].text;
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${CONFIG.timeout/1000} seconds`);
+      throw new NetworkError(`Request timeout after ${CONFIG.timeout/1000} seconds`, 
+                           'https://api.anthropic.com/v1/messages', 408);
     }
-    throw error;
+    if (error instanceof NetworkError || error instanceof ValidationError) {
+      throw error;
+    }
+    throw new NetworkError(`Claude API network error: ${error.message}`, 
+                         'https://api.anthropic.com/v1/messages', 0);
   }
 }
 
@@ -239,17 +249,27 @@ async function callOpenAI(prompt) {
     clearTimeout(timeoutId);
     
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new NetworkError(`OpenAI API error: ${response.status} ${response.statusText}. ${errorText}`, 
+                           'https://api.openai.com/v1/chat/completions', response.status);
     }
     
     const data = await response.json();
+    if (!data.choices || !data.choices[0] || !data.choices[0].message || !data.choices[0].message.content) {
+      throw new ValidationError('Invalid response format from OpenAI API', 'response_content');
+    }
     return data.choices[0].message.content;
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${CONFIG.timeout/1000} seconds`);
+      throw new NetworkError(`Request timeout after ${CONFIG.timeout/1000} seconds`, 
+                           'https://api.openai.com/v1/chat/completions', 408);
     }
-    throw error;
+    if (error instanceof NetworkError || error instanceof ValidationError) {
+      throw error;
+    }
+    throw new NetworkError(`OpenAI API network error: ${error.message}`, 
+                         'https://api.openai.com/v1/chat/completions', 0);
   }
 }
 
@@ -274,17 +294,27 @@ async function callPerplexity(prompt) {
     clearTimeout(timeoutId);
     
     if (!response.ok) {
-      throw new Error(`Perplexity API error: ${response.status}`);
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new NetworkError(`Perplexity API error: ${response.status} ${response.statusText}. ${errorText}`, 
+                           'https://api.perplexity.ai/chat/completions', response.status);
     }
     
     const data = await response.json();
+    if (!data.choices || !data.choices[0] || !data.choices[0].message || !data.choices[0].message.content) {
+      throw new ValidationError('Invalid response format from Perplexity API', 'response_content');
+    }
     return data.choices[0].message.content;
   } catch (error) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error(`Request timeout after ${CONFIG.timeout/1000} seconds`);
+      throw new NetworkError(`Request timeout after ${CONFIG.timeout/1000} seconds`, 
+                           'https://api.perplexity.ai/chat/completions', 408);
     }
-    throw error;
+    if (error instanceof NetworkError || error instanceof ValidationError) {
+      throw error;
+    }
+    throw new NetworkError(`Perplexity API network error: ${error.message}`, 
+                         'https://api.perplexity.ai/chat/completions', 0);
   }
 }
 

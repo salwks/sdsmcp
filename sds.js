@@ -705,8 +705,105 @@ async function main() {
   }
 }
 
-// Run main function
-main().catch(error => {
-  console.error('❌ Unexpected error:', error.message);
-  process.exit(1);
-});
+// MCP Server functionality
+function startMCPServer() {
+  const server = {
+    name: "sds-generator",
+    version: "1.0.10",
+    tools: [
+      {
+        name: "generate_specification",
+        description: "Generate software design specification from project description",
+        inputSchema: {
+          type: "object",
+          properties: {
+            description: {
+              type: "string",
+              description: "Project description"
+            },
+            projectType: {
+              type: "string",
+              enum: ["mobile", "web", "backend", "desktop"],
+              description: "Type of project"
+            },
+            techStack: {
+              type: "string",
+              description: "Preferred tech stack"
+            }
+          },
+          required: ["description"]
+        }
+      }
+    ]
+  };
+
+  process.stdin.on('data', async (data) => {
+    try {
+      const request = JSON.parse(data.toString());
+      
+      if (request.method === 'initialize') {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            protocolVersion: "2024-11-05",
+            capabilities: {
+              tools: {}
+            },
+            serverInfo: server
+          }
+        }) + '\n');
+      } else if (request.method === 'tools/list') {
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { tools: server.tools }
+        }) + '\n');
+      } else if (request.method === 'tools/call' && request.params.name === 'generate_specification') {
+        const { description, projectType = 'web', techStack } = request.params.arguments;
+        
+        await loadEnv();
+        const selectedProjectType = projectType;
+        const techStackOptions = techStackOptions[selectedProjectType];
+        const selectedTechStack = techStackOptions[0];
+        
+        const moduleList = await generateModuleList(description);
+        const specification = await generateSpecification(description, selectedTechStack, moduleList);
+        const markdown = generateMarkdown(specification);
+        
+        process.stdout.write(JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: markdown
+              }
+            ]
+          }
+        }) + '\n');
+      }
+    } catch (error) {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: request?.id || null,
+        error: {
+          code: -1,
+          message: error.message
+        }
+      }) + '\n');
+    }
+  });
+}
+
+// Check for MCP mode
+if (process.argv.includes('--mcp')) {
+  startMCPServer();
+} else {
+  // Run main function
+  main().catch(error => {
+    console.error('❌ Unexpected error:', error.message);
+    process.exit(1);
+  });
+}

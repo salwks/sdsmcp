@@ -23,18 +23,46 @@ async function loadEnv() {
   }
 }
 
-// Question helper function
+// Simple question helper
+let inputQueue = [];
+let inputIndex = 0;
+
 function askQuestion(query) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  
   return new Promise(resolve => {
+    // If we have pre-loaded answers, use them
+    if (inputIndex < inputQueue.length) {
+      const answer = inputQueue[inputIndex++];
+      console.log(query + answer);
+      resolve(answer.trim());
+      return;
+    }
+    
+    // Otherwise use interactive input
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
     rl.question(query, (answer) => {
       rl.close();
-      resolve(answer);
+      resolve(answer.trim());
     });
+  });
+}
+
+// Load piped input if available
+function loadPipedInput() {
+  return new Promise(resolve => {
+    if (!process.stdin.isTTY) {
+      let input = '';
+      process.stdin.on('data', chunk => input += chunk);
+      process.stdin.on('end', () => {
+        inputQueue = input.trim().split('\n');
+        resolve();
+      });
+    } else {
+      resolve();
+    }
   });
 }
 
@@ -592,6 +620,7 @@ async function main() {
   }
 
   await loadEnv();
+  await loadPipedInput();
   
   try {
     const description = process.argv[2];

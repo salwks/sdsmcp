@@ -335,64 +335,30 @@ function parseJSONFromResponse(response, type = 'object') {
     throw new ParsingError('Response is not a string', response);
   }
 
-  // Strategy 1: Direct parsing
+  // Strategy 1: Direct parsing — works when the AI complied with "respond
+  // with JSON only".
   try {
     return JSON.parse(response);
-  } catch (error) {
-    // Continue to next strategy
-  }
+  } catch (_) { /* fall through */ }
 
-  // Strategy 2: Extract JSON from markdown code blocks
-  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/;
-  const codeBlockMatch = response.match(codeBlockRegex);
+  // Strategy 2: Extract JSON from markdown code blocks. Most LLMs default
+  // to ```json fences when asked for structured output.
+  const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
     try {
       return JSON.parse(codeBlockMatch[1].trim());
-    } catch (error) {
-      // Continue to next strategy
-    }
+    } catch (_) { /* fall through */ }
   }
 
-  // Strategy 3: Find JSON-like content
-  const jsonStartIndex = response.indexOf('{');
-  const jsonEndIndex = response.lastIndexOf('}');
-  if (jsonStartIndex !== -1 && jsonEndIndex !== -1 && jsonEndIndex > jsonStartIndex) {
-    try {
-      const jsonString = response.substring(jsonStartIndex, jsonEndIndex + 1);
-      return JSON.parse(jsonString);
-    } catch (error) {
-      // Continue to next strategy
-    }
-  }
-
-  // Strategy 4: More aggressive extraction with bracket counting
-  let bracketCount = 0;
-  let startIndex = -1;
-  let endIndex = -1;
-  
-  for (let i = 0; i < response.length; i++) {
-    if (response[i] === '{') {
-      if (bracketCount === 0) startIndex = i;
-      bracketCount++;
-    } else if (response[i] === '}') {
-      bracketCount--;
-      if (bracketCount === 0 && startIndex !== -1) {
-        endIndex = i;
-        break;
-      }
-    }
-  }
-  
-  if (startIndex !== -1 && endIndex !== -1) {
-    try {
-      const extractedJson = response.substring(startIndex, endIndex + 1);
-      return JSON.parse(extractedJson);
-    } catch (error) {
-      // All strategies failed
-    }
-  }
-
-  throw new ParsingError('Failed to parse JSON from response after trying all strategies', response);
+  // No more strategies. Earlier versions attempted naive substring
+  // extraction (first `{` to last `}`) and brace counting, but both can
+  // silently corrupt JSON when the AI response contains prose with stray
+  // braces or nested-quoted braces. Failing loudly is safer for
+  // downstream specification generation.
+  throw new ParsingError(
+    'Failed to parse JSON from response. Expected raw JSON or a ```json fenced block.',
+    response
+  );
 }
 
 // CLI-specific functions
@@ -674,20 +640,50 @@ ${module.functions && module.functions.length > 0 ?
 `;
 }
 
+// Sanitize a name (typically supplied by the LLM in module.name) for safe
+// use as a filename. Strips path traversal characters, control bytes, and
+// anything that isn't a sane filename character. Falls back to 'module' if
+// the result is empty.
+function sanitizeFileName(name) {
+  if (typeof name !== 'string') return 'module';
+  const cleaned = name
+    .toLowerCase()
+    .replace(/\s+/g, '_')                  // whitespace → underscore
+    .replace(/[\/\\]/g, '_')               // path separators → underscore
+    .replace(/\.\./g, '_')                 // collapse parent-dir hops
+    .replace(/[^a-z0-9_\-가-힣ぁ-んァ-ン一-龥]/g, '_')  // keep alnum, underscore, hyphen, basic CJK
+    .replace(/^_+|_+$/g, '')               // trim leading/trailing underscores
+    .slice(0, 80);                         // cap length to avoid filesystem limits
+  return cleaned || 'module';
+}
+
 async function createSDSDirectory(specification, dirPath) {
   try {
     await fs.mkdir(dirPath, { recursive: true });
-    
+    const dirAbs = path.resolve(dirPath);
+
     // Create specification.json
     const specPath = path.join(dirPath, 'specification.json');
     await fs.writeFile(specPath, JSON.stringify(specification, null, 2));
-    
-    // Create module template files
+
+    // Create module template files. The LLM may return arbitrary module names
+    // (or be tricked via prompt injection into doing so), so we sanitize and
+    // also defensively check that the resulting absolute path stays inside
+    // dirPath — refuse to write anywhere else.
     for (const module of specification.modules) {
       const fileExtension = getFileExtension(specification.techStack);
-      const modulePath = path.join(dirPath, `${module.name.toLowerCase().replace(/\s+/g, '_')}${fileExtension}`);
+      const safeName = sanitizeFileName(module.name);
+      const modulePath = path.join(dirPath, `${safeName}${fileExtension}`);
+      const modulePathAbs = path.resolve(modulePath);
+      if (!modulePathAbs.startsWith(dirAbs + path.sep) && modulePathAbs !== dirAbs) {
+        throw new FileIOError(
+          `Refusing to write outside SDS directory: ${modulePathAbs}`,
+          modulePathAbs,
+          'write'
+        );
+      }
       const moduleTemplate = generateCodeTemplate(module, specification.techStack);
-      await fs.writeFile(modulePath, moduleTemplate);
+      await fs.writeFile(modulePathAbs, moduleTemplate);
     }
     
     // Create package.json template
@@ -798,7 +794,9 @@ async function main() {
 // Check for MCP mode
 if (process.argv.includes('--mcp')) {
   startMCPServer().catch(error => {
-    handleError(error, false);
+    // isMCP=true so handleError emits a JSON-RPC error envelope on stdout
+    // instead of a plain text message (which would break the client).
+    handleError(error, true);
   });
 } else {
   // Run main function

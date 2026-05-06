@@ -215,64 +215,31 @@ function parseJSONFromResponse(response) {
     throw new ParsingError('Response is not a string', response);
   }
 
-  // Strategy 1: Direct parsing
+  // Strategy 1: Direct parsing — works when the AI complied with "respond
+  // with JSON only".
   try {
     return JSON.parse(response);
-  } catch (error) {
-    // Continue to next strategy
-  }
+  } catch (_) { /* fall through */ }
 
-  // Strategy 2: Extract JSON from markdown code blocks
-  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/;
-  const codeBlockMatch = response.match(codeBlockRegex);
+  // Strategy 2: Extract JSON from markdown code blocks. Most LLMs default
+  // to ```json fences when asked for structured output.
+  const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
     try {
       return JSON.parse(codeBlockMatch[1].trim());
-    } catch (error) {
-      // Continue to next strategy
-    }
+    } catch (_) { /* fall through */ }
   }
 
-  // Strategy 3: Find JSON-like content
-  const jsonStartIndex = response.indexOf('{');
-  const jsonEndIndex = response.lastIndexOf('}');
-  if (jsonStartIndex !== -1 && jsonEndIndex !== -1 && jsonEndIndex > jsonStartIndex) {
-    try {
-      const jsonString = response.substring(jsonStartIndex, jsonEndIndex + 1);
-      return JSON.parse(jsonString);
-    } catch (error) {
-      // Continue to next strategy
-    }
-  }
-
-  // Strategy 4: More aggressive extraction with bracket counting
-  let bracketCount = 0;
-  let startIndex = -1;
-  let endIndex = -1;
-  
-  for (let i = 0; i < response.length; i++) {
-    if (response[i] === '{') {
-      if (bracketCount === 0) startIndex = i;
-      bracketCount++;
-    } else if (response[i] === '}') {
-      bracketCount--;
-      if (bracketCount === 0 && startIndex !== -1) {
-        endIndex = i;
-        break;
-      }
-    }
-  }
-  
-  if (startIndex !== -1 && endIndex !== -1) {
-    try {
-      const extractedJson = response.substring(startIndex, endIndex + 1);
-      return JSON.parse(extractedJson);
-    } catch (error) {
-      // All strategies failed
-    }
-  }
-
-  throw new ParsingError('Failed to parse JSON from response after trying all strategies', response);
+  // No more strategies. Earlier versions of this code attempted naive
+  // substring extraction (first `{` to last `}`) and brace counting, but
+  // both can silently corrupt JSON when the AI response contains prose
+  // with stray braces or nested-quoted braces. Failing loudly is safer
+  // for downstream specification generation — better to retry the call
+  // (or fall back to another API) than to write malformed `.sds/` files.
+  throw new ParsingError(
+    'Failed to parse JSON from response. Expected raw JSON or a ```json fenced block.',
+    response
+  );
 }
 
 // Generate module list using AI
